@@ -5,6 +5,7 @@ class SvdRegisters(Dashboard.Module):
     
     def __init__(self):
         self.table = {}
+        self.FORMAT = "HEX"
 
     def label(self):
         return 'SVD Registers'
@@ -22,8 +23,8 @@ class SvdRegisters(Dashboard.Module):
                 # fetch register and update the table
                 name, address = reg_info.split()
                 
-                value = gdb.parse_and_eval("*"+address) ############
-                string_value = SvdRegisters.format_value(value)
+                value = gdb.parse_and_eval("*"+address)
+                string_value = self.format_value(value)
                 changed = self.table and (self.table.get(name, '') != string_value)
                 self.table[name] = string_value
                 registers.append((name, string_value, changed))
@@ -52,13 +53,42 @@ class SvdRegisters(Dashboard.Module):
             for i in range(0, len(partial), per_line):
                 out.append(' '.join(partial[i:i + per_line]).rstrip())
         return out
-
-    @staticmethod
-    def format_value(value):
+    
+    def hex(self, arg):
+        self.FORMAT = "HEX"
+    
+    def bin(self, arg):
+        self.FORMAT = "BIN"
+    
+    def decimal(self, arg):
+        self.FORMAT = "DECIMAL"
+    
+    def commands(self):
+        return {
+            'hex': {
+                'action': self.hex,
+                'doc': 'Set hexidemical format.'
+            },
+            'bin': {
+                'action': self.bin,
+                'doc': 'Set binary format.'
+            },
+            'decimal': {
+                'action': self.decimal,
+                'doc': 'Set decimal format.'
+            }
+        }
+    
+    def format_value(self, value):
         try:
             if value.type.code in [gdb.TYPE_CODE_INT, gdb.TYPE_CODE_PTR]:
                 int_value = to_unsigned(value, value.type.sizeof)
-                value_format = '0x{{:0{}x}}'.format(2 * value.type.sizeof)
+                if self.FORMAT == "BIN":
+                    value_format = '{{:0{}b}}'.format(8 * value.type.sizeof)
+                elif self.FORMAT == "DECIMAL":
+                    value_format = '{}'
+                else:
+                    value_format = '0x{{:0{}x}}'.format(2 * value.type.sizeof)
                 return value_format.format(int_value)
         except (gdb.error, ValueError):
             # convert to unsigned but preserve code and flags information
