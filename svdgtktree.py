@@ -44,15 +44,18 @@ class MyWindow(Gtk.ApplicationWindow):
         
         open_button = Gtk.Button(stock = Gtk.STOCK_OPEN)
         ok_button = Gtk.Button(stock = Gtk.STOCK_OK)
+        apply_button = Gtk.Button(stock = Gtk.STOCK_APPLY)
         cancel_button = Gtk.Button(stock = Gtk.STOCK_CANCEL)
         open_button.connect("clicked", self.on_open_clicked)
         ok_button.connect("clicked", self.on_ok_clicked)
+        apply_button.connect("clicked", self.on_apply_clicked)
         cancel_button.connect("clicked", self.on_cancel_clicked)
         
         grid.attach(open_button,     0, 0, 1, 1)
-        grid.attach(scrolled_window, 0, 1, 4, 1)
+        grid.attach(scrolled_window, 0, 1, 5, 1)
         grid.attach(ok_button,       2, 2, 1, 1)
-        grid.attach(cancel_button,   3, 2, 1, 1)
+        grid.attach(apply_button,    3, 2, 1, 1)
+        grid.attach(cancel_button,   4, 2, 1, 1)
         
         self.add(grid)
         
@@ -134,7 +137,7 @@ class MyWindow(Gtk.ApplicationWindow):
             self.set_piter_selected(piter)
         self.view.set_model(self.store)
     
-    def on_ok_clicked (self, widget):
+    def save_data (self):
         s = self.svd_filename + '\n'
         piter = self.store.get_iter("1")
         while piter is not None:
@@ -146,7 +149,13 @@ class MyWindow(Gtk.ApplicationWindow):
             piter = self.store.iter_next(piter)
         with open(FILE, 'w') as f:
             f.write(s)
+    
+    def on_ok_clicked (self, widget):
+        self.save_data()
         self.destroy()
+        
+    def on_apply_clicked (self, widget):
+        self.save_data()
         
     def on_cancel_clicked (self, widget):
         self.destroy()
