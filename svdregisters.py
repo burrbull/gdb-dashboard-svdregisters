@@ -26,11 +26,12 @@ class SvdRegisters(Dashboard.Module):
             for reg_info in lines[1:]:
                 # fetch register and update the table
                 reg_split = reg_info.split()
-                name, address = reg_split[0], reg_split[1]
-                if len(reg_split) == 4:
-                    bit_offset, bit_width = int(reg_split[2]), int(reg_split[3])
+                svdname, name, address = reg_split[0], reg_split[1], reg_split[2]
+                if len(reg_split) == 5:
+                    bit_offset, bit_width = int(reg_split[3]), int(reg_split[4])
                 else:
                     bit_offset, bit_width = None, None
+                if name == "_": name = svdname
                 value = gdb.parse_and_eval("*"+address)
                 string_value = self.format_value(value, bit_offset, bit_width)
                 old_value = self.table.get(name, '')
