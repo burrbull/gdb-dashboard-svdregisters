@@ -102,7 +102,7 @@ fn main() {
             println!("SVD File {}", filename);
             let mut regs = Vec::new();
             for l in lines {
-                regs.push(l.split_whitespace().collect::<Vec<_>>()[0]);
+                regs.push(l.split_whitespace().nth(0).unwrap());
             }
             println!("{:?}", regs);
             store = load_svd(Path::new(&filename), regs);
@@ -197,10 +197,8 @@ fn load_svd (svd_path: &Path, regs: Vec<&str>) -> Option<TreeStore> {
     for p in &periphs {
         let paddr = p.base_address;
         let piter = store.append(None);
-        let pdesc = match p.description {
-            Some(ref s) => s.replace('\n', " "),
-            None => "".to_string()
-        };
+        let pdesc = p.description.to_owned().unwrap_or_default()
+                                 .replace("\n", " ");
         let pbase = match p.derived_from { // need correct
             Some(ref s) => {
                 let mut pb = p;
@@ -225,7 +223,7 @@ fn load_svd (svd_path: &Path, regs: Vec<&str>) -> Option<TreeStore> {
                     &Register::Single(ref r) | &Register::Array(ref r, _) => {
                         let raddr = paddr + r.address_offset;
                         let rname = format!("{}.{}", p.name, r.name);
-                        let rdesc = r.description.replace('\n', " ");
+                        let rdesc = r.description.replace("\n", " ");
                         
                         let mut enabled = false;
                         for rn in &regs {
@@ -254,7 +252,7 @@ fn save_data (store: &TreeStore, svd_file: &String) -> Result<(), std::io::Error
             if let Some(ref citer) = store.iter_children(piter) {
                 loop {
                     if store.get_value(citer, 1).get::<bool>().unwrap() {
-                        s += &format!("{}.{} {}\n", store.get_value(&piter, 0).get::<String>().unwrap(),
+                        s += &format!("{}.{} _ {}\n", store.get_value(&piter, 0).get::<String>().unwrap(),
                                                     store.get_value(&citer, 0).get::<String>().unwrap(),
                                                     store.get_value(&citer, 2).get::<String>().unwrap());
                     }
