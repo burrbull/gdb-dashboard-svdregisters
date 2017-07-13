@@ -25,15 +25,18 @@ class SvdRegisters(Dashboard.Module):
             changed_list = []
             for reg_info in lines[1:]:
                 # fetch register and update the table
-                name, address = reg_info.split()
-                
+                reg_split = reg_info.split()
+                name, address = reg_split[0], reg_split[1]
+                if len(reg_split) == 4:
+                    bit_offset, bit_width = int(reg_split[2]), int(reg_split[3])
+                else:
+                    bit_offset, bit_width = None, None
                 value = gdb.parse_and_eval("*"+address)
-                string_value = self.format_value(value)
+                string_value = self.format_value(value, bit_offset, bit_width)
                 old_value = self.table.get(name, '')
                 changed = self.table and (old_value != string_value) and not self.FORMAT_CHANGED
                 self.table[name] = string_value
                 registers.append((name, string_value, changed))
-                
                 if changed:
                     changed_list.append((name, old_value, string_value))
             # split registers in rows and columns, each column is composed of name,
@@ -104,21 +107,31 @@ class SvdRegisters(Dashboard.Module):
             },
         }
     
-    def format_value(self, value):
+    def format_value(self, value, boffset, bwidth):
         try:
             if value.type.code in [gdb.TYPE_CODE_INT, gdb.TYPE_CODE_PTR]:
                 int_value = to_unsigned(value, value.type.sizeof)
-                if self.FORMAT == "BIN":
-                    value_format = '{{:0{}b}}'.format(8 * value.type.sizeof)
-                    fvalue = value_format.format(int_value)
-                    fvalue = '_'.join([ fvalue[i:i+8] for i in range(0, len(fvalue), 8) ])
-                elif self.FORMAT == "DECIMAL":
-                    value_format = '{}'
-                    fvalue = value_format.format(int_value)
+                if bwidth:
+                    int_value = (int_value >> boffset) - (int_value>>(boffset+bwidth)<<bwidth)
+                    if self.FORMAT == "BIN":
+                        value_format = '0b{:b}'
+                    elif self.FORMAT == "DECIMAL":
+                        value_format = '{}'
+                    else:
+                        value_format = '0x{:x}'
+                    return value_format.format(int_value)
                 else:
-                    value_format = '0x{{:0{}x}}'.format(2 * value.type.sizeof)
-                    fvalue = value_format.format(int_value)
-                return fvalue
+                    if self.FORMAT == "BIN":
+                        value_format = '{{:0{}b}}'.format(8 * value.type.sizeof)
+                        fvalue = value_format.format(int_value)
+                        fvalue = '_'.join([ fvalue[i:i+8] for i in range(0, len(fvalue), 8) ])
+                    elif self.FORMAT == "DECIMAL":
+                        value_format = '{}'
+                        fvalue = value_format.format(int_value)
+                    else:
+                        value_format = '0x{{:0{}x}}'.format(2 * value.type.sizeof)
+                        fvalue = value_format.format(int_value)
+                    return fvalue
         except (gdb.error, ValueError):
             # convert to unsigned but preserve code and flags information
             pass
