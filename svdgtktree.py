@@ -1,3 +1,5 @@
+import gi
+gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk
 from gi.repository import Pango
 import sys
@@ -8,7 +10,6 @@ FILE = "registers.txt"
 from cmsis_svd.parser import SVDParser
 
 class MyWindow(Gtk.ApplicationWindow):
-
     def __init__(self, app):
         Gtk.Window.__init__(self, title="SVD", application=app)
         self.set_border_width(10)
@@ -135,6 +136,7 @@ class MyWindow(Gtk.ApplicationWindow):
                 name = "{}.{}".format(p.name, r.name)
                 self.store.append(piter, [r.name, True if name in regs else False, '0x{:08x}'.format(raddr), r.description.replace('\n', " ")])
             self.set_piter_selected(piter)
+        self.set_title(self.svd_filename)
         self.view.set_model(self.store)
     
     def save_data (self):
@@ -144,7 +146,7 @@ class MyWindow(Gtk.ApplicationWindow):
             citer = self.store.iter_children(piter)
             while citer is not None:
                 if self.store[citer][1] == True:
-                    s += "{}.{} {}\n".format(self.store[piter][0], self.store[citer][0], self.store[citer][2])
+                    s += "{}.{} _ {}\n".format(self.store[piter][0], self.store[citer][0], self.store[citer][2])
                 citer = self.store.iter_next(citer)
             piter = self.store.iter_next(piter)
         with open(FILE, 'w') as f:
