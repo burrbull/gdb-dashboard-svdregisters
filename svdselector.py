@@ -164,6 +164,9 @@ class MyWindow(Gtk.ApplicationWindow):
                     self.store.append(riter, [f.name, False, '0x{:08x}'.format(raddr), f.description.replace('\n', " "), "", True, str(f.bit_offset), str(f.bit_width)])
         self.set_title(self.svd_filename)
         self.view.set_model(self.store)
+        self.select_items(regs)
+    
+    def select_items(self, regs):
         piter = self.store.get_iter_first()
         while piter is not None:
             riter = self.store.iter_children(piter)

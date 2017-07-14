@@ -6,16 +6,18 @@ extern crate gtk;
 
 use gtk::prelude::*;
 use gtk::{Button, Window, Value, WindowType, FileChooserDialog, TreeView,
-         TreeStore, CellRendererText, CellRendererToggle, TreeViewColumn, TreePath};
+         TreeStore, CellRendererText, CellRendererToggle, TreeViewColumn, TreePath, TreeIter};
 
 extern crate svd_parser as svd;
-use svd::Register;
+use svd::{Register, BitRange};
 
 
 use std::path::PathBuf;
 use std::path::Path;
 use std::fs::File;
 use std::io::{Read, Write};
+
+use std::collections::HashMap;
 
 const FILE: &str = "registers.txt";
 
@@ -54,6 +56,14 @@ fn main() {
     column_in_out.set_title("Out?");
     view.append_column(&column_in_out);
     
+    let cell_alias = CellRendererText::new();
+    let column_alias = TreeViewColumn::new();
+    column_alias.pack_start(&cell_alias, true);
+    column_alias.add_attribute(&cell_alias, "text", 4);
+    column_alias.add_attribute(&cell_alias, "editable", 5);
+    column_alias.set_title("Alias");
+    view.append_column(&column_alias);
+    
     let cell_address = CellRendererText::new();
     let column_address = TreeViewColumn::new();
     column_address.pack_start(&cell_address, true);
@@ -73,7 +83,9 @@ fn main() {
         gtk::PolicyType::Always, gtk::PolicyType::Always);
     scrolled_window.add_with_viewport(&view);
     
-    scrolled_window.set_size_request(500, 600);
+    scrolled_window.set_size_request(500, 500);
+    scrolled_window.set_hexpand(true);
+    scrolled_window.set_vexpand(true);
     
     let grid = gtk::Grid::new();
     grid.set_row_spacing(5);
@@ -100,23 +112,22 @@ fn main() {
         let mut lines = text.lines().map(|l| l.trim());
         if let Some(filename) = lines.next() {
             println!("SVD File {}", filename);
-            let mut regs = Vec::new();
-            for l in lines {
-                regs.push(l.split_whitespace().nth(0).unwrap());
-            }
-            println!("{:?}", regs);
-            store = load_svd(Path::new(&filename), regs);
+            let regs: HashMap<&str, &str> = lines.map(|l| (
+                        l.split_whitespace().nth(0).unwrap(),
+                        l.split_whitespace().nth(1).unwrap())).collect();
+            store = load_svd(Path::new(&filename));
             svd_filename = Some(filename.to_string());
             if let Some(ref st) = store {
                 fflag = true;
                 view.set_model(st);
+                select_items(&view.clone(), st, regs);
             }
         }
     }
     if !fflag {
         if let Some(pathbuf) = open_file(&window) {
             println!("Open SVD File {:?}", pathbuf); 
-            store = load_svd(pathbuf.as_path(), vec![]);
+            store = load_svd(pathbuf.as_path());
             if let Some(ref st) = store {
                 svd_filename = pathbuf.into_os_string().into_string().ok();
                 view.set_model(st);
@@ -129,6 +140,15 @@ fn main() {
             if let Some(ref st) = store {
                 on_toggle(st, &path)
             }
+        });
+    }
+    {
+        let store = store.clone();
+        cell_alias.connect_edited(move |_,path,new_text| {
+                if let Some(ref st) = store {
+                    let iter = st.get_iter(&path).unwrap();
+                    st.set_value(&iter, 4, &Value::from(&new_text));
+                }
         });
     }
     {
@@ -187,81 +207,137 @@ fn open_file(window: &Window) -> Option<PathBuf> {
     pathbuf
 }
 
-fn load_svd (svd_path: &Path, regs: Vec<&str>) -> Option<TreeStore> {
+fn load_svd (svd_path: &Path) -> Option<TreeStore> {
     let xml = &mut String::new();
     File::open(&svd_path).unwrap().read_to_string(xml).expect("Unable to read file");
     let device = svd::parse(xml);
     let periphs = device.peripherals;
     
-    let store = TreeStore::new(&[String::static_type(), gtk::Type::Bool, String::static_type(), String::static_type()]);
+    let store = TreeStore::new(&[String::static_type(),
+                                 gtk::Type::Bool,
+                                 String::static_type(),
+                                 String::static_type(),
+                                 String::static_type(),
+                                 gtk::Type::Bool,
+                                 String::static_type(),
+                                 String::static_type()
+                                 ]);
     for p in &periphs {
         let paddr = p.base_address;
-        let piter = store.append(None);
-        let pdesc = p.description.to_owned().unwrap_or_default()
-                                 .replace("\n", " ");
-        let pbase = match p.derived_from { // need correct
-            Some(ref s) => {
-                let mut pb = p;
-                let mut k = 1000; 
-                for i in 0..periphs.len() {
-                    if *s == periphs[i].name {
-                        k = i;
-                        break;
-                    }
-                }
-                if k != 1000 {
-                    pb = &periphs[k];
-                }
-                pb
-            },
+        let pbase = match p.derived_from {
+            Some(ref s) => periphs.iter().find(|x| x.name == *s).unwrap_or(p),
             None => p
         };
-        store.set(&piter, &[0, 1, 2, 3], &[&p.name, &false, &format!("0x{:08x}", paddr), &pdesc]);
+        let pdesc = pbase.description.to_owned().unwrap_or_default().replace("\n", " ");
+        let piter = store.append(None);
+        store.set(&piter, &[0, 2, 3], &[&p.name, &format!("0x{:08x}", paddr), &pdesc]);
         if let Some(ref rs) = pbase.registers {
             for reg in rs {
                 match reg {
                     &Register::Single(ref r) | &Register::Array(ref r, _) => {
                         let raddr = paddr + r.address_offset;
-                        let rname = format!("{}.{}", p.name, r.name);
                         let rdesc = r.description.replace("\n", " ");
-                        
-                        let mut enabled = false;
-                        for rn in &regs {
-                            if *rn == rname {
-                                enabled = true;
-                                break;
+                        let riter = store.append(&piter);
+                        store.set(&riter, &[0, 2, 3, 5], &[&r.name, &format!("0x{:08x}", raddr), &rdesc, &true]);
+                        if let Some(ref fields) = r.fields {
+                            for f in fields {
+                                let fdesc = f.description.to_owned().unwrap_or_default().replace("\n", " ");
+                                let BitRange{ offset: foffset, width: fwidth } = f.bit_range;
+                                let fiter = store.append(&riter);
+                                store.set(&fiter, &[0, 2, 3, 5, 6, 7], &[&f.name, &format!("0x{:08x}", raddr), &fdesc, &true, &foffset, &fwidth]);
                             }
                         }
-                        if enabled { println!("{}", rname); }
-                        let riter = store.append(&piter);
-                        store.set(&riter, &[0, 1, 2, 3], &[&r.name, &enabled, &format!("0x{:08x}", raddr), &rdesc]);
                     }
                 }
                     
             }
         }
-        set_piter_selected(&store, &piter);
     }
     Some(store)
+}
+
+fn select_items (view: &TreeView, store: &TreeStore, regs: HashMap<&str, &str>) {
+    if let Some(ref piter) = store.get_iter_first() {
+    loop {
+        if let Some(ref riter) = store.iter_children(piter) {
+        loop {
+            find_and_select(view, store, riter, &regs);
+            if let Some(ref fiter) = store.iter_children(riter) {
+            loop {
+                find_and_select(view, store, fiter, &regs);
+                if !store.iter_next(fiter) { break; }
+            } }
+            if !store.iter_next(riter) { break; }
+        } }
+        set_piter_selected(store, &piter);
+        if !store.iter_next(piter)  { break; }
+    } }
+}
+
+fn find_and_select (view: &TreeView, store: &TreeStore, iter: &TreeIter, regs: &HashMap<&str, &str>) {
+    let name = get_reg_name(store, iter);
+    if regs.contains_key(&name as &str) {
+        store.set_value(iter, 1, &Value::from(&true));
+        let alias = regs[&name as &str];
+        if alias != "_" { 
+            store.set_value(iter, 4, &Value::from(&alias));
+        }
+        view.expand_row(&store.get_path(&store.iter_parent(iter).unwrap()).unwrap(), false);
+    }
+}
+
+fn get_reg_name(store: &TreeStore, citer: &TreeIter) -> String {
+    let depth = store.get_path(citer).unwrap().get_depth();
+    match depth {
+        3 => {
+            let fiter = citer;
+            let riter = store.iter_parent(&fiter).unwrap();
+            let piter = store.iter_parent(&riter).unwrap();
+            return format!("{}.{}.{}", store.get_value(&piter, 0).get::<String>().unwrap(),
+                                       store.get_value(&riter, 0).get::<String>().unwrap(),
+                                       store.get_value(&fiter, 0).get::<String>().unwrap());
+        },
+        2 => {
+            let riter = citer;
+            let piter = store.iter_parent(&riter).unwrap();
+            return format!("{}.{}", store.get_value(&piter, 0).get::<String>().unwrap(),
+                                    store.get_value(&riter, 0).get::<String>().unwrap());
+        },
+        _ => {
+            let piter = citer;
+            return format!("{}", store.get_value(&piter, 0).get::<String>().unwrap());
+        }
+    }
 }
 
 fn save_data (store: &TreeStore, svd_file: &String) -> Result<(), std::io::Error> {
     let mut s = svd_file.to_owned() + "\n";
     if let Some(ref piter) = store.get_iter_first() {
+    loop {
+        if let Some(ref riter) = store.iter_children(piter) {
         loop {
-            if let Some(ref citer) = store.iter_children(piter) {
-                loop {
-                    if store.get_value(citer, 1).get::<bool>().unwrap() {
-                        s += &format!("{}.{} _ {}\n", store.get_value(&piter, 0).get::<String>().unwrap(),
-                                                    store.get_value(&citer, 0).get::<String>().unwrap(),
-                                                    store.get_value(&citer, 2).get::<String>().unwrap());
-                    }
-                    if !store.iter_next(citer) { break; }
-                }
+            if store.get_value(riter, 1).get::<bool>().unwrap() {
+                let alias = store.get_value(&riter, 4).get::<String>().unwrap_or_default();
+                s += &format!("{} {} {}\n", get_reg_name(store, riter),
+                                           if alias != "" {alias} else {"_".to_string()},
+                                           store.get_value(&riter, 2).get::<String>().unwrap());
             }
-            if !store.iter_next(piter)  { break; }
-        }
-    }
+            if let Some(ref fiter) = store.iter_children(riter) {
+            loop {
+                if store.get_value(fiter, 1).get::<bool>().unwrap() {
+                    let alias = store.get_value(&fiter, 4).get::<String>().unwrap_or_default();
+                    s += &format!("{} {} {} {} {}\n", get_reg_name(store, fiter),
+                                               if alias != "" {alias} else {"_".to_string()},
+                                               store.get_value(&fiter, 2).get::<String>().unwrap(),
+                                               store.get_value(&fiter, 6).get::<String>().unwrap(),
+                                               store.get_value(&fiter, 7).get::<String>().unwrap());
+                }
+                if !store.iter_next(fiter) { break; }
+            } }
+            if !store.iter_next(riter) { break; }
+        } }
+        if !store.iter_next(piter)  { break; }
+    } }
     println!("{}", s);
     let mut f = File::create(FILE)?;
     f.write_fmt(format_args!("{}", s))?;
@@ -273,37 +349,37 @@ fn on_toggle(st: &TreeStore, path: &TreePath) {
     if let Some(iter) = st.get_iter(path) {
         let current_value = !st.get_value(&iter, 1).get::<bool>().unwrap();
         st.set_value(&iter, 1, &Value::from(&current_value));
-        
-        if path.get_depth() == 1 {
-            let piter = iter;
-            if let Some(ref citer) = st.iter_children(&piter) {
+        let depth = path.get_depth();
+        match depth {
+            1 => {
+                let piter = iter;
+                if let Some(ref riter) = st.iter_children(&piter) {
                 loop {
-                    st.set_value(citer, 1, &Value::from(&current_value));
-                    if !st.iter_next(citer) { break; }
-                }
-            }
-            println!("{} {}", st.get_value(&piter, 0).get::<String>().unwrap(),
+                    st.set_value(riter, 1, &Value::from(&current_value));
+                    if !st.iter_next(riter) { break; }
+                } }
+                println!("{} {}", get_reg_name(st, &piter),
                               if current_value == true {"enabled"} else {"disabled"});
-        }
-        else {
-            let citer = iter;
-            if let Some(ref piter) = st.iter_parent(&citer) {
-                let all_selected = set_piter_selected (st, &piter);
-                if all_selected {
-                    println!("{} {}", st.get_value(&piter, 0).get::<String>().unwrap(),
-                                      if current_value == true {"enabled"} else {"disabled"});
+            
+            },
+            2 => {
+                let riter = iter;
+                if let Some(ref piter) = st.iter_parent(&riter) {
+                    let all_selected = set_piter_selected (st, &piter);
+                    println!("{} {}", get_reg_name(st, if all_selected {piter} else {&riter}),
+                              if current_value == true {"enabled"} else {"disabled"});
                 }
-                else {
-                    println!("{}.{} {}", st.get_value(&piter, 0).get::<String>().unwrap(),
-                                         st.get_value(&citer, 0).get::<String>().unwrap(),
-                                         if current_value == true {"enabled"} else {"disabled"});
-                }
+            },
+            _ => {
+                println!("{} {}", get_reg_name(st, &iter),
+                              if current_value == true {"enabled"} else {"disabled"});
             }
         }
     }
 }
 
-fn set_piter_selected (store: &TreeStore, piter: &gtk::TreeIter) -> bool {
+
+fn set_piter_selected (store: &TreeStore, piter: &TreeIter) -> bool {
     let mut all_selected = true;
     if let Some(ref citer) = store.iter_children(piter) {
         loop {
