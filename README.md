@@ -9,6 +9,8 @@ There are several commands.
 *bin*, *hex* and *decimal* change Numeral system.
 *changed* turns on/off info how value changed at last step
 
+Copy or link it to ~/.gdbinit.d
+
 svdregisters.py reads file "registers.txt" from current directory
 
 #### File format:
