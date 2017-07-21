@@ -1,10 +1,10 @@
 [package]
 name = "svdselector"
-version = "0.0.2"
+version = "0.0.3"
 authors = ["Andrey Zgarbul <zgarbul.andrey@gmail.com>"]
 
 [dependencies]
-gtk = { git = "https://github.com/gtk-rs/gtk.git"}
+gtk = { git = "https://github.com/gtk-rs/gtk.git", rev = "da064ce"}
 glib = { git = "https://github.com/gtk-rs/glib.git"}
 gdk-pixbuf = { git = "https://github.com/gtk-rs/gdk-pixbuf.git"}
 svd-parser = "0.5"

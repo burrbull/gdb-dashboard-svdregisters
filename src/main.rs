@@ -1,19 +1,16 @@
-//! # Basic Sample
-//!
-//! This sample demonstrates how to create a toplevel `window`, set its title, size and position, how to add a `button` to this `window` and how to connect signals with actions.
-
 extern crate gtk;
 
 use gtk::prelude::*;
-use gtk::{Button, Window, Value, WindowType, FileChooserDialog, TreeView,
-         TreeStore, CellRendererText, CellRendererToggle, TreeViewColumn, TreePath, TreeIter};
+use gtk::{Button, Window, WindowType, FileChooserDialog, TreeView,
+         TreeStore, CellRendererText, CellRendererToggle, TreeViewColumn, TreePath, TreeIter, TreeModelExt};
 
 extern crate svd_parser as svd;
 use svd::{Register, BitRange};
 
 
-use std::path::PathBuf;
-use std::path::Path;
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::path::{PathBuf, Path};
 use std::fs::File;
 use std::io::{Read, Write};
 
@@ -31,13 +28,13 @@ fn main() {
     
     let window = Window::new(WindowType::Toplevel);
     let view = TreeView::new();
-    //let open_button = Button::new_with_label("Open");
+    let open_button = Button::new_with_label("Open");
     let ok_button = Button::new_with_label("Ok");
     let apply_button = Button::new_with_label("Apply");
     let cancel_button = Button::new_with_label("Cancel");
     
-    let mut svd_filename:     Option<String> = None;
-    let mut store:        Option<TreeStore> = None;
+    let svd_filename: Rc<RefCell<Option<String>>>    = Rc::new(RefCell::new(None));
+    let store:        Rc<RefCell<Option<TreeStore>>> = Rc::new(RefCell::new(None));
     
     window.set_title("SVD");
     window.set_border_width(10);
@@ -91,53 +88,64 @@ fn main() {
     grid.set_row_spacing(5);
     
 
-    //grid.attach(&open_button,     0, 0, 1, 1);
-    grid.attach(&scrolled_window,   0, 1, 5, 1);
+    grid.attach(&open_button,     0, 0, 1, 1);
+    grid.attach(&scrolled_window, 0, 1, 5, 1);
     grid.attach(&ok_button,       2, 2, 1, 1);
     grid.attach(&apply_button,    3, 2, 1, 1);
     grid.attach(&cancel_button,   4, 2, 1, 1);
     
     window.add(&grid);
          
-    window.connect_delete_event(|_, _| {
-        gtk::main_quit();
-        Inhibit(false)
-    });  
     window.show_all();
     
     let mut fflag = false;
     let text = &mut String::new();
-    if let Ok(mut f) = File::open(FILE) {
-        f.read_to_string(text).expect("Unable to read file");
-        let mut lines = text.lines().map(|l| l.trim());
-        if let Some(filename) = lines.next() {
-            println!("SVD File {}", filename);
-            let regs: HashMap<&str, &str> = lines.map(|l| (
-                        l.split_whitespace().nth(0).unwrap(),
-                        l.split_whitespace().nth(1).unwrap())).collect();
-            store = load_svd(Path::new(&filename));
-            svd_filename = Some(filename.to_string());
-            if let Some(ref st) = store {
-                fflag = true;
-                view.set_model(st);
-                select_items(&view.clone(), st, regs);
+    {
+        let stor = store.clone();
+        let svd_f = svd_filename.clone();
+        if let Ok(mut f) = File::open(FILE) {
+            f.read_to_string(text).expect("Unable to read file");
+            let mut lines = text.lines().map(|l| l.trim());
+            if let Some(filename) = lines.next() {
+                println!("SVD File {}", filename);
+                let regs: HashMap<&str, &str> = lines.map(|l| (
+                            l.split_whitespace().nth(0).unwrap(),
+                            l.split_whitespace().nth(1).unwrap())).collect();
+                *stor.borrow_mut() = load_svd(Path::new(&filename));
+                *svd_f.borrow_mut() = Some(filename.to_string());
+                if let Some(ref st) = *stor.borrow() {
+                    fflag = true;
+                    view.set_model(st);
+                    select_items(&view.clone(), st, regs);
+                }
             }
         }
-    }
-    if !fflag {
-        if let Some(pathbuf) = open_file(&window) {
-            println!("Open SVD File {:?}", pathbuf); 
-            store = load_svd(pathbuf.as_path());
-            if let Some(ref st) = store {
-                svd_filename = pathbuf.into_os_string().into_string().ok();
-                view.set_model(st);
+        if !fflag {
+            if let Some(pathbuf) = open_file(&window) {
+                println!("Open SVD File {:?}", pathbuf);
+                *stor.borrow_mut() = load_svd(&pathbuf);
+                if let Some(ref st) = *stor.borrow() {
+                    *svd_f.borrow_mut() = pathbuf.into_os_string().into_string().ok();
+                    view.set_model(st);
+                }
             }
         }
+        if let Some(ref svd_file) = *svd_filename.borrow() {
+            window.set_title(svd_file);
+        }
     }
+    
+    window.connect_delete_event(|_, _| {
+        gtk::main_quit();
+        Inhibit(false)
+    });  
+    
+    cancel_button.connect_clicked(|_| { gtk::main_quit();  });
+    
     {
         let store = store.clone();
         cell_in_out.connect_toggled(move |_,path| {
-            if let Some(ref st) = store {
+            if let Some(ref st) = *store.borrow() {
                 on_toggle(st, &path)
             }
         });
@@ -145,18 +153,18 @@ fn main() {
     {
         let store = store.clone();
         cell_alias.connect_edited(move |_,path,new_text| {
-                if let Some(ref st) = store {
-                    let iter = st.get_iter(&path).unwrap();
-                    st.set_value(&iter, 4, &Value::from(&new_text));
-                }
+            if let Some(ref st) = *store.borrow() {
+                let iter = st.get_iter(&path).unwrap();
+                st.set(&iter, &[4], &[&new_text]);
+            }
         });
     }
     {
         let store = store.clone();
         let svd_filename = svd_filename.clone();
         ok_button.connect_clicked(move |_| {
-            if let Some(ref st) = store {
-                if let Some(ref svd_file) = svd_filename {
+            if let Some(ref st) = *store.borrow() {
+                if let Some(ref svd_file) = *svd_filename.borrow() {
                     save_data(st, svd_file).expect("Unable to save file");
                 }
             }
@@ -167,37 +175,40 @@ fn main() {
         let store = store.clone();
         let svd_filename = svd_filename.clone();
         apply_button.connect_clicked(move |_| {
-            if let Some(ref st) = store {
-                if let Some(ref svd_file) = svd_filename {
+            if let Some(ref st) = *store.borrow() {
+                if let Some(ref svd_file) = *svd_filename.borrow() {
                     save_data(st, svd_file).expect("Unable to save file");
                 }
             }
         });
     }
-    cancel_button.connect_clicked(|_| { gtk::main_quit();  });
-    /*
+    
     {
         let window = window.clone();
+        let store = store.clone();
+        let svd_filename = svd_filename.clone();
         open_button.connect_clicked(move |_| {
             if let Some(pathbuf) = open_file(&window) {
             println!("Open SVD File {:?}", pathbuf); 
-            store = load_svd(pathbuf.as_path(), vec![]);
-            if let Some(ref st) = store {
-                svd_filename = pathbuf.into_os_string().into_string().ok();
+            *store.borrow_mut() = load_svd(&pathbuf);
+            if let Some(ref st) = *store.borrow() {
+                *svd_filename.borrow_mut() = pathbuf.into_os_string().into_string().ok();
+                if let Some(ref svd_file) = *svd_filename.borrow() {
+                    window.set_title(svd_file);
+                }
                 view.set_model(st);
             }
         }
-            
         });
-    }*/
+    }
     gtk::main();
 }
 
 fn open_file(window: &Window) -> Option<PathBuf> {
     let dialog = FileChooserDialog::new(Some("Please choose a file"), Some(window),
         gtk::FileChooserAction::Open);
-    dialog.add_button("Cancel", 0);//gtk::ResponseType::Cancel);
-    dialog.add_button("Open", 1);//gtk::ResponseType::Ok);
+    dialog.add_button("Cancel", 0);
+    dialog.add_button("Open", 1);
     let response = dialog.run();
     let pathbuf = match response {
         1 => dialog.get_filename(),
@@ -277,10 +288,10 @@ fn select_items (view: &TreeView, store: &TreeStore, regs: HashMap<&str, &str>) 
 fn find_and_select (view: &TreeView, store: &TreeStore, iter: &TreeIter, regs: &HashMap<&str, &str>) {
     let name = get_reg_name(store, iter);
     if regs.contains_key(&name as &str) {
-        store.set_value(iter, 1, &Value::from(&true));
+        store.set(iter, &[1], &[&true]);
         let alias = regs[&name as &str];
         if alias != "_" { 
-            store.set_value(iter, 4, &Value::from(&alias));
+            store.set(iter, &[4], &[&alias]);
         }
         view.expand_row(&store.get_path(&store.iter_parent(iter).unwrap()).unwrap(), false);
     }
@@ -293,19 +304,19 @@ fn get_reg_name(store: &TreeStore, citer: &TreeIter) -> String {
             let fiter = citer;
             let riter = store.iter_parent(&fiter).unwrap();
             let piter = store.iter_parent(&riter).unwrap();
-            return format!("{}.{}.{}", store.get_value(&piter, 0).get::<String>().unwrap(),
-                                       store.get_value(&riter, 0).get::<String>().unwrap(),
-                                       store.get_value(&fiter, 0).get::<String>().unwrap());
+            return format!("{}.{}.{}", store.get_string(&piter, 0),
+                                       store.get_string(&riter, 0),
+                                       store.get_string(&fiter, 0));
         },
         2 => {
             let riter = citer;
             let piter = store.iter_parent(&riter).unwrap();
-            return format!("{}.{}", store.get_value(&piter, 0).get::<String>().unwrap(),
-                                    store.get_value(&riter, 0).get::<String>().unwrap());
+            return format!("{}.{}", store.get_string(&piter, 0),
+                                    store.get_string(&riter, 0));
         },
         _ => {
             let piter = citer;
-            return format!("{}", store.get_value(&piter, 0).get::<String>().unwrap());
+            return format!("{}", store.get_string(&piter, 0));
         }
     }
 }
@@ -316,21 +327,21 @@ fn save_data (store: &TreeStore, svd_file: &String) -> Result<(), std::io::Error
     loop {
         if let Some(ref riter) = store.iter_children(piter) {
         loop {
-            if store.get_value(riter, 1).get::<bool>().unwrap() {
-                let alias = store.get_value(&riter, 4).get::<String>().unwrap_or_default();
+            if store.get_bool(riter, 1) {
+                let alias = store.get_string(&riter, 4);
                 s += &format!("{} {} {}\n", get_reg_name(store, riter),
                                            if alias != "" {alias} else {"_".to_string()},
-                                           store.get_value(&riter, 2).get::<String>().unwrap());
+                                           store.get_string(&riter, 2));
             }
             if let Some(ref fiter) = store.iter_children(riter) {
             loop {
-                if store.get_value(fiter, 1).get::<bool>().unwrap() {
-                    let alias = store.get_value(&fiter, 4).get::<String>().unwrap_or_default();
+                if store.get_bool(fiter, 1) {
+                    let alias = store.get_string(&fiter, 4);
                     s += &format!("{} {} {} {} {}\n", get_reg_name(store, fiter),
                                                if alias != "" {alias} else {"_".to_string()},
-                                               store.get_value(&fiter, 2).get::<String>().unwrap(),
-                                               store.get_value(&fiter, 6).get::<String>().unwrap(),
-                                               store.get_value(&fiter, 7).get::<String>().unwrap());
+                                               store.get_string(&fiter, 2),
+                                               store.get_string(&fiter, 6),
+                                               store.get_string(&fiter, 7));
                 }
                 if !store.iter_next(fiter) { break; }
             } }
@@ -347,15 +358,15 @@ fn save_data (store: &TreeStore, svd_file: &String) -> Result<(), std::io::Error
 
 fn on_toggle(st: &TreeStore, path: &TreePath) {
     if let Some(iter) = st.get_iter(path) {
-        let current_value = !st.get_value(&iter, 1).get::<bool>().unwrap();
-        st.set_value(&iter, 1, &Value::from(&current_value));
+        let current_value = !st.get_bool(&iter, 1);
+        st.set(&iter, &[1], &[&current_value]);
         let depth = path.get_depth();
         match depth {
             1 => {
                 let piter = iter;
                 if let Some(ref riter) = st.iter_children(&piter) {
                 loop {
-                    st.set_value(riter, 1, &Value::from(&current_value));
+                    st.set(riter, &[1], &[&current_value]);
                     if !st.iter_next(riter) { break; }
                 } }
                 println!("{} {}", get_reg_name(st, &piter),
@@ -383,10 +394,24 @@ fn set_piter_selected (store: &TreeStore, piter: &TreeIter) -> bool {
     let mut all_selected = true;
     if let Some(ref citer) = store.iter_children(piter) {
         loop {
-            all_selected &= store.get_value(citer, 1).get::<bool>().unwrap();
+            all_selected &= store.get_bool(citer, 1);
             if !all_selected || !store.iter_next(citer) { break; }
         }
     }
-    store.set_value(piter, 1, &Value::from(&all_selected));
+    store.set(piter, &[1], &[&all_selected]);
     all_selected
+}
+
+trait GetValue {
+   fn get_bool (&self, iter: &TreeIter, ncol: i32) -> bool;
+   fn get_string (&self, iter: &TreeIter, ncol: i32) -> String;
+}
+
+impl GetValue for TreeStore {
+    fn get_bool (&self, iter: &TreeIter, ncol: i32) -> bool {
+        self.get_value(&iter, ncol).get::<bool>().unwrap_or_default()
+    }
+    fn get_string (&self, iter: &TreeIter, ncol: i32) -> String {
+        self.get_value(&iter, ncol).get::<String>().unwrap_or_default()
+    }
 }

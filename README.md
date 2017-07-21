@@ -30,4 +30,3 @@ svdregisters.py reads file "registers.txt" from current directory
 svdselector.py - Python variant. It require *cmsis_svd* library.
 
 And fast autonomous variant in Rust language.
-But it has one limitation - only one SVD file at a time.
