@@ -1,20 +1,22 @@
 import os.path
 
-class SvdRegisters(Dashboard.Module):
+class SvdRegisters (Dashboard.Module):
     """Show the CPU registers and their values."""
     
     FILE = "registers.txt"
     
-    def __init__(self):
+    def __init__ (self):
         self.table = {}
         self.FORMAT = "HEX"
         self.FORMAT_CHANGED = False
         self.SHOW_CHANGED = False
+        
+        self.svd_device = None
 
-    def label(self):
+    def label (self):
         return 'SVD Registers'
 
-    def lines(self, term_width, style_changed):
+    def lines (self, term_width, style_changed):
         # fetch registers status
         out = []
         registers = []
@@ -73,22 +75,55 @@ class SvdRegisters(Dashboard.Module):
         self.FORMAT_CHANGED = False
         return out
     
-    def hex(self, arg):
+    def hex (self, arg):
         self.FORMAT = "HEX"
         self.FORMAT_CHANGED = True
     
-    def bin(self, arg):
+    def bin (self, arg):
         self.FORMAT = "BIN"
         self.FORMAT_CHANGED = True
     
-    def decimal(self, arg):
+    def decimal (self, arg):
         self.FORMAT = "DECIMAL"
         self.FORMAT_CHANGED = True
     
-    def changed(self, arg):
+    def changed (self, arg):
         self.SHOW_CHANGED = True
     
-    def commands(self):
+    def monitor (self, arg):
+        if not self.svd_device:
+            try:
+                from cmsis_svd.parser import SVDParser
+                if os.path.isfile(SvdRegisters.FILE):
+                    with open(SvdRegisters.FILE, 'r') as f:
+                        lines = [l.strip() for l in f.readlines()]
+                        parser = SVDParser.for_xml_file(lines[0])
+                        self.svd_device = parser.get_device()
+            except:
+                raise Exception("Cannot open or parse SVD file. Check 'cmsis_svd' library installed")
+        if self.svd_device and arg:
+            args = arg.split()
+            name = args[0]
+            res = self.find_register(name)
+            if res:
+                address, boffset, bwidth = res
+                alias = args[1] if len(args) > 1 else "_"
+                b = " {} {}".format(boffset, bwidth) if boffset else ""
+                line = "{} {} {} {}\n".format(name, alias, address, b)
+                with open(SvdRegisters.FILE, "a") as f:
+                    f.write(line)
+            else:
+                raise Exception("Register {} is absent".format(name))
+    
+    def remove (self, arg):
+        if os.path.isfile(SvdRegisters.FILE):
+            with open(SvdRegisters.FILE, 'r') as f:
+                lines = f.readlines()
+            newlines = [l for l in lines[1:] if arg not in l.split()[:2]]
+            with open(SvdRegisters.FILE, 'w') as f:
+                f.write(lines[0]+"".join(newlines))
+    
+    def commands (self):
         return {
             'hex': {
                 'action': self.hex,
@@ -106,16 +141,24 @@ class SvdRegisters(Dashboard.Module):
                 'action': self.changed,
                 'doc': 'Show old value of changed registers.'
             },
+            'monitor': {
+                'action': self.monitor,
+                'doc': 'Add register to monitored.'
+            },
+            'remove': {
+                'action': self.remove,
+                'doc': 'Remove register from monitored.'
+            },
         }
     
-    def format_value(self, value, boffset, bwidth):
+    def format_value (self, value, boffset, bwidth):
         try:
             if value.type.code in [gdb.TYPE_CODE_INT, gdb.TYPE_CODE_PTR]:
                 int_value = to_unsigned(value, value.type.sizeof)
                 if bwidth:
                     int_value = (int_value >> boffset) - (int_value>>(boffset+bwidth)<<bwidth)
                     if self.FORMAT == "BIN":
-                        value_format = '0b{:b}'
+                        value_format = '0b{{:0{}b}}'.format(bwidth)
                     elif self.FORMAT == "DECIMAL":
                         value_format = '{}'
                     else:
@@ -137,3 +180,18 @@ class SvdRegisters(Dashboard.Module):
             # convert to unsigned but preserve code and flags information
             pass
         return str(value)
+    
+    def find_register (self, name):
+        path = name.split(".")
+        if len(path) > 1:
+            for p in self.svd_device.peripherals:
+                if p.name == path[0]:
+                    for r in p.registers:
+                        if r.name == path[1]:
+                            raddr = '0x{:08x}'.format(p.base_address + r.address_offset)
+                            if len(path) == 2:
+                                return raddr, None, None
+                            else:
+                                for f in r.fields:
+                                    if f.name == path[2]:
+                                        return raddr, f.bit_offset, f.bit_width
