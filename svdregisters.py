@@ -196,13 +196,16 @@ class SvdRegisters (Dashboard.Module):
         if self.svd_device and arg:
             args = arg.split()
             name = args[0]
-            r = self.find_register(name)
-            if r:
-                r.alias = args[1] if len(args) > 1 else "_"
-                with open(SvdRegisters.FILE, "a") as f:
-                    f.write(str(r)+"\n")
+            if name not in self.table:
+                r = self.find_register(name)
+                if r:
+                    r.alias = args[1] if len(args) > 1 else "_"
+                    with open(SvdRegisters.FILE, "a") as f:
+                        f.write(str(r))
+                else:
+                    raise Exception("Register {} not found".format(name))
             else:
-                raise Exception("Register {} not found".format(name))
+                raise Exception("Register {} already exists".format(name))
     
     def find_register (self, name):
         path = name.split(".")
