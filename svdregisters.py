@@ -1,5 +1,102 @@
 import os.path
 
+def setbit (val, offset, bit):
+    if bit:
+        return val | (1 << offset)
+    else:
+        return val & ~(1 << offset)
+
+class Register:
+    def __init__ (self, name, alias, address):
+        self.name, self.address = name, address
+        self.alias = name if alias=="_" else alias
+        self.changed = False
+    
+    @staticmethod
+    def from_str(s):
+        name, alias, address = s.split()
+        return Register(name, alias, address)
+    
+    def __str__ (self):
+        alias = "_" if self.alias == self.name else self.alias
+        return "{} {} {}\n".format(self.name, alias, self.address)
+    
+    @property
+    def gdbvalue(self):
+        return gdb.parse_and_eval("*"+self.address)
+    
+    def format_value (self, FORMAT):
+        value = self.gdbvalue
+        int_value = to_unsigned(value, value.type.sizeof)
+        try:
+            if value.type.code in [gdb.TYPE_CODE_INT, gdb.TYPE_CODE_PTR]:
+                if FORMAT == "BIN":
+                    value_format = '{{:0{}b}}'.format(8 * value.type.sizeof)
+                    fvalue = value_format.format(int_value)
+                    fvalue = '_'.join([ fvalue[i:i+8] for i in range(0, len(fvalue), 8) ])
+                elif FORMAT == "DECIMAL":
+                    value_format = '{}'
+                    fvalue = value_format.format(int_value)
+                else:
+                    value_format = '0x{{:0{}x}}'.format(2 * value.type.sizeof)
+                    fvalue = value_format.format(int_value)
+                return fvalue
+        except (gdb.error, ValueError):
+            pass
+        return str(value)
+    
+    def set_value (self, value):
+        oldvalue = self.gdbvalue
+        if oldvalue.type.code == gdb.TYPE_CODE_INT:
+            width = oldvalue.type.sizeof * 8
+            if 0 <= value < (2 ** width):
+                run("set *{0} = {1}".format(self.address, value))
+
+class Field (Register):
+    def __init__ (self, name, alias, address, boffset, bwidth):
+        self.name, self.address, self.boffset, self.bwidth = name, address, boffset, bwidth
+        self.alias = name if alias=="_" else alias
+        self.changed = False
+    
+    @staticmethod
+    def from_str(s):
+        name, alias, address, boffset, bwidth = s.split()
+        return Field(name, alias, address, int(boffset), int(bwidth))
+    
+    def __str__ (self):
+        alias = "_" if self.alias == self.name else self.alias
+        return "{} {} {} {} {}".format(self.name, alias, self.address, self.boffset, self.bwidth)
+    
+    def format_value (self, FORMAT):
+        value = self.gdbvalue
+        try:
+            if value.type.code in [gdb.TYPE_CODE_INT, gdb.TYPE_CODE_PTR]:
+                int_value = to_unsigned(value, value.type.sizeof)
+                int_value = (int_value >> self.boffset) - (int_value>>(self.boffset+self.bwidth)<<self.bwidth)
+                if FORMAT == "BIN":
+                    value_format = '0b{{:0{}b}}'.format(self.bwidth)
+                elif FORMAT == "DECIMAL":
+                    value_format = '{}'
+                else:
+                    value_format = '0x{:x}'
+                return value_format.format(int_value)
+        except (gdb.error, ValueError):
+            pass
+        return str(value)
+    
+    def set_value (self, value):
+        oldvalue = self.gdbvalue
+        if oldvalue.type.code == gdb.TYPE_CODE_INT:
+            int_value = to_unsigned(oldvalue, oldvalue.type.sizeof)
+            if 0 <= value < (2 ** self.bwidth):
+                mask = value << self.boffset
+                newvalue = oldvalue
+                for i in range(self.bwidth):
+                    bit = (value >> i) - (value >> (i+1) << 1)
+                    newvalue = setbit(newvalue, self.boffset+i, bit)
+                run("set *{0} = {1}".format(self.address, newvalue))
+
+
 class SvdRegisters (Dashboard.Module):
     """Show the CPU registers and their values."""
     
@@ -28,25 +125,20 @@ class SvdRegisters (Dashboard.Module):
             for reg_info in lines[1:]:
                 # fetch register and update the table
                 reg_split = reg_info.split()
-                svdname, name, address = reg_split[0], reg_split[1], reg_split[2]
-                if len(reg_split) == 5:
-                    bit_offset, bit_width = int(reg_split[3]), int(reg_split[4])
-                else:
-                    bit_offset, bit_width = None, None
-                if name == "_": name = svdname
-                value = gdb.parse_and_eval("*"+address)
-                string_value = self.format_value(value, bit_offset, bit_width)
-                old_value = self.table.get(name, '')
-                changed = self.table and (old_value != string_value) and not self.FORMAT_CHANGED
-                self.table[name] = string_value
-                registers.append((name, string_value, changed))
-                if changed:
-                    changed_list.append((name, old_value, string_value))
-            # split registers in rows and columns, each column is composed of name,
-            # space, value and another trailing space which is skipped in the last
-            # column (hence term_width + 1)
-            max_name = max(len(name) for name, _, _ in registers)
-            max_value = max(len(value) for _, value, _ in registers)
+                if len(reg_split) == 3:
+                    r = Register.from_str(reg_info)
+                elif len(reg_split) == 5:
+                    r = Field.from_str(reg_info)
+                r.value = r.format_value(self.FORMAT)
+                old_r = self.table.get(r.alias, None)
+                r.changed = old_r and (old_r.value != r.value) and not self.FORMAT_CHANGED
+                self.table[r.alias] = r
+                registers.append(r)
+                if r.changed:
+                    changed_list.append((r, old_r))
+            # split registers in rows and columns
+            max_name = max(len(r.alias) for r in registers)
+            max_value = max(len(r.value) for r in registers)
             max_width = max_name + max_value + 2
             per_line = int((term_width + 1) / max_width) or 1
             # redistribute extra space among columns
@@ -59,18 +151,18 @@ class SvdRegisters (Dashboard.Module):
                 max_value += extra
             # format registers info
             partial = []
-            for name, value, changed in registers:
-                styled_name = ansi(name.rjust(max_name), R.style_low)
-                value_style = R.style_selected_1 if changed else ''
-                styled_value = ansi(value.ljust(max_value), value_style)
+            for r in registers:
+                styled_name = ansi(r.alias.rjust(max_name), R.style_low)
+                value_style = R.style_selected_1 if r.changed else ''
+                styled_value = ansi(r.value.ljust(max_value), value_style)
                 partial.append(styled_name + ' ' + styled_value)
             for i in range(0, len(partial), per_line):
                 out.append(' '.join(partial[i:i + per_line]).rstrip())
             if changed_list:
                 out.append('- '*(term_width//2))
-                for name, old, new in changed_list:
-                    out.append('{} {} -> {}'.format(ansi(name.rjust(max_name), R.style_low),
-                                 ansi(old, ''), ansi(new, '')))
+                for r, old_r in changed_list:
+                    out.append('{} {} -> {}'.format(ansi(r.alias.rjust(max_name), R.style_low),
+                                 ansi(old_r.value, ''), ansi(r.value, '')))
                                  
         self.FORMAT_CHANGED = False
         return out
@@ -104,17 +196,29 @@ class SvdRegisters (Dashboard.Module):
         if self.svd_device and arg:
             args = arg.split()
             name = args[0]
-            res = self.find_register(name)
-            if res:
-                address, boffset, bwidth = res
-                alias = args[1] if len(args) > 1 else "_"
-                b = " {} {}".format(boffset, bwidth) if boffset else ""
-                line = "{} {} {} {}\n".format(name, alias, address, b)
+            r = self.find_register(name)
+            if r:
+                r.alias = args[1] if len(args) > 1 else "_"
                 with open(SvdRegisters.FILE, "a") as f:
-                    f.write(line)
+                    f.write(str(r)+"\n")
             else:
-                raise Exception("Register {} is absent".format(name))
+                raise Exception("Register {} not found".format(name))
     
+    def find_register (self, name):
+        path = name.split(".")
+        if len(path) > 1:
+            for p in self.svd_device.peripherals:
+                if p.name == path[0]:
+                    for r in p.registers:
+                        if r.name == path[1]:
+                            raddr = format_address(p.base_address + r.address_offset)
+                            if len(path) == 2:
+                                return Register(name, name, raddr)
+                            else:
+                                for f in r.fields:
+                                    if f.name == path[2]:
+                                        return Field(name, name, raddr, f.bit_offset, f.bit_width)
+
     def remove (self, arg):
         if os.path.isfile(SvdRegisters.FILE):
             with open(SvdRegisters.FILE, 'r') as f:
@@ -122,6 +226,19 @@ class SvdRegisters (Dashboard.Module):
             newlines = [l for l in lines[1:] if arg not in l.split()[:2]]
             with open(SvdRegisters.FILE, 'w') as f:
                 f.write(lines[0]+"".join(newlines))
+        if arg in self.table:
+            del self.table[arg]
+    
+    def set_value (self, arg):
+        if arg:
+            args = arg.split()
+            if len(args) == 2:
+                name, value = args[0], int(args[1])
+                if name in self.table:
+                    r = self.table[name]
+                    r.set_value(value)
+                else:
+                    raise Exception("Register {} not found".format(name))
     
     def commands (self):
         return {
@@ -141,6 +258,10 @@ class SvdRegisters (Dashboard.Module):
                 'action': self.changed,
                 'doc': 'Show old value of changed registers.'
             },
+            'add': {
+                'action': self.monitor,
+                'doc': 'Add register to monitored.'
+            },
             'monitor': {
                 'action': self.monitor,
                 'doc': 'Add register to monitored.'
@@ -149,49 +270,8 @@ class SvdRegisters (Dashboard.Module):
                 'action': self.remove,
                 'doc': 'Remove register from monitored.'
             },
+            'set': {
+                'action': self.set_value,
+                'doc': 'Change register value.'
+            },
         }
-    
-    def format_value (self, value, boffset, bwidth):
-        try:
-            if value.type.code in [gdb.TYPE_CODE_INT, gdb.TYPE_CODE_PTR]:
-                int_value = to_unsigned(value, value.type.sizeof)
-                if bwidth:
-                    int_value = (int_value >> boffset) - (int_value>>(boffset+bwidth)<<bwidth)
-                    if self.FORMAT == "BIN":
-                        value_format = '0b{{:0{}b}}'.format(bwidth)
-                    elif self.FORMAT == "DECIMAL":
-                        value_format = '{}'
-                    else:
-                        value_format = '0x{:x}'
-                    return value_format.format(int_value)
-                else:
-                    if self.FORMAT == "BIN":
-                        value_format = '{{:0{}b}}'.format(8 * value.type.sizeof)
-                        fvalue = value_format.format(int_value)
-                        fvalue = '_'.join([ fvalue[i:i+8] for i in range(0, len(fvalue), 8) ])
-                    elif self.FORMAT == "DECIMAL":
-                        value_format = '{}'
-                        fvalue = value_format.format(int_value)
-                    else:
-                        value_format = '0x{{:0{}x}}'.format(2 * value.type.sizeof)
-                        fvalue = value_format.format(int_value)
-                    return fvalue
-        except (gdb.error, ValueError):
-            # convert to unsigned but preserve code and flags information
-            pass
-        return str(value)
-    
-    def find_register (self, name):
-        path = name.split(".")
-        if len(path) > 1:
-            for p in self.svd_device.peripherals:
-                if p.name == path[0]:
-                    for r in p.registers:
-                        if r.name == path[1]:
-                            raddr = '0x{:08x}'.format(p.base_address + r.address_offset)
-                            if len(path) == 2:
-                                return raddr, None, None
-                            else:
-                                for f in r.fields:
-                                    if f.name == path[2]:
-                                        return raddr, f.bit_offset, f.bit_width

@@ -7,7 +7,14 @@ It can be used for simple monitoring of cortex-m registers.
 
 There are several commands.
 *bin*, *hex* and *decimal* change Numeral system.
+
 *changed* turns on/off info how value changed at last step
+
+*monitor* and *remove* for adding and removing Register or Field to list.
+Requere register name(alias) as argument
+
+*set* command used for changing value of Register by name.
+Requere register name and value as arguments
 
 Copy or link it to ~/.gdbinit.d
 
