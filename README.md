@@ -3,7 +3,7 @@
 Tool and module for adding any register to gdbinit from svd-file
 
 #### svdregisters.py is a module for https://github.com/cyrus-and/gdb-dashboard 
-It can be used for simple monitoring of cortex-m registers.
+It can be used for simple monitoring of Cortex-M registers.
 
 There are several commands.
 *bin*, *hex* and *decimal* change Numeral system.
@@ -16,7 +16,7 @@ Requere register name(alias) as argument
 *set* command used for changing value of Register by name.
 Requere register name and value as arguments
 
-Copy or link it to ~/.gdbinit.d
+Copy or link it into ~/.gdbinit.d
 
 svdregisters.py reads file "registers.txt" from current directory
 
@@ -32,8 +32,12 @@ svdregisters.py reads file "registers.txt" from current directory
 
 *address* is register address in memory
 
-#### For simple choise registers from Cortex-M SVD file GTK GUI interface presents.
+#### There is also GTK-rs GUI interface for simple choise registers from Cortex-M SVD file.
 
-svdselector.py - Python variant. It require *cmsis_svd* library.
+Compile:
+```
+cargo build --release
+```
+and run from your hardware source directory.
 
-And fast autonomous variant in Rust language.
+SVDs for STM32 can be found [here](https://stm32.agg.io/rs/).

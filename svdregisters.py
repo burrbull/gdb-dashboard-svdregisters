@@ -1,4 +1,5 @@
 import os.path
+import struct
 
 def setbit (val, offset, bit):
     if bit:
@@ -23,7 +24,10 @@ class Register:
     
     @property
     def gdbvalue(self):
-        return gdb.parse_and_eval("*"+self.address)
+        inferior = gdb.selected_inferior()
+        memory = inferior.read_memory(int(self.address, 0), 4)
+        m = struct.unpack("<L", memory)[0]
+        return gdb.parse_and_eval(str(m))
     
     def format_value (self, FORMAT):
         value = self.gdbvalue
@@ -201,26 +205,29 @@ class SvdRegisters (Dashboard.Module):
                 if r:
                     r.alias = args[1] if len(args) > 1 else "_"
                     with open(SvdRegisters.FILE, "a") as f:
-                        f.write(str(r))
+                        f.write(str(r)+"\n")
                 else:
                     raise Exception("Register {} not found".format(name))
             else:
                 raise Exception("Register {} already exists".format(name))
-    
+
     def find_register (self, name):
         path = name.split(".")
         if len(path) > 1:
             for p in self.svd_device.peripherals:
                 if p.name == path[0]:
-                    for r in p.registers:
-                        if r.name == path[1]:
-                            raddr = format_address(p.base_address + r.address_offset)
-                            if len(path) == 2:
-                                return Register(name, name, raddr)
-                            else:
-                                for f in r.fields:
-                                    if f.name == path[2]:
-                                        return Field(name, name, raddr, f.bit_offset, f.bit_width)
+                    return find_recursive(p._registers, name, path[1:], p.base_address)
+
+    def find_recursive(rs, name, path, baseaddr):
+        for r in rs:
+            if r.name == path[0]:
+                raddr = format_address(baseaddr + r.address_offset)
+                if len(path) == 1:
+                    return Register(name, name, raddr)
+                else:
+                    for f in r.fields:
+                        if f.name == path[1]:
+                            return Field(name, name, raddr, f.bit_offset, f.bit_width)
 
     def remove (self, arg):
         if os.path.isfile(SvdRegisters.FILE):
@@ -231,7 +238,7 @@ class SvdRegisters (Dashboard.Module):
                 f.write(lines[0]+"".join(newlines))
         if arg in self.table:
             del self.table[arg]
-    
+
     def set_value (self, arg):
         if arg:
             args = arg.split()
@@ -242,7 +249,7 @@ class SvdRegisters (Dashboard.Module):
                     r.set_value(value)
                 else:
                     raise Exception("Register {} not found".format(name))
-    
+
     def commands (self):
         return {
             'hex': {
