@@ -2,14 +2,12 @@
 
 use gtk::prelude::*;
 use gtk::{
-    Button, CellRendererText, CellRendererToggle, TreeIter, TreeModelExt, TreePath, TreeStore,
-    TreeView, TreeViewColumn,
+    Button, CellRendererText, CellRendererToggle, TreeIter, TreePath, TreeStore, TreeView,
+    TreeViewColumn,
 };
 
-use svd::{
-    Cluster, EnumeratedValues, Register, RegisterCluster, RegisterClusterArrayInfo, RegisterInfo,
-};
-use svd_parser as svd;
+use svd::{Cluster, DimElement, EnumeratedValues, Register, RegisterCluster, RegisterInfo};
+use svd_parser::svd;
 
 use std::{
     cell::RefCell,
@@ -23,13 +21,10 @@ use std::collections::HashMap;
 
 const FILE: &str = "registers.txt";
 
-use lazy_static::lazy_static;
-use regex::Regex;
 fn rm_white(text: &str) -> String {
-    lazy_static! {
-        static ref RE: Regex = Regex::new(r"\s\s+").unwrap();
-    }
-    RE.replace_all(text, " ").to_string()
+    use lazy_regex::regex;
+    let re = regex!(r"\s\s+");
+    re.replace_all(text, " ").to_string()
 }
 
 fn main() {
@@ -40,10 +35,10 @@ fn main() {
 
     let window = gtk::Window::new(gtk::WindowType::Toplevel);
     let view = TreeView::new();
-    let open_button = Button::new_with_label("Open");
-    let ok_button = Button::new_with_label("Ok");
-    let apply_button = Button::new_with_label("Apply");
-    let cancel_button = Button::new_with_label("Cancel");
+    let open_button = Button::with_label("Open");
+    let ok_button = Button::with_label("Ok");
+    let apply_button = Button::with_label("Apply");
+    let cancel_button = Button::with_label("Cancel");
 
     let svd_filename: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
     let store: Rc<RefCell<Option<TreeStore>>> = Rc::new(RefCell::new(None));
@@ -134,7 +129,7 @@ fn main() {
                 *svd_f.borrow_mut() = Some(filename.to_string());
                 if let Some(st) = &*stor.borrow() {
                     fflag = true;
-                    view.set_model(st);
+                    view.set_model(Some(st));
                     select_items(&view.clone(), st, &regs);
                 }
             }
@@ -145,7 +140,7 @@ fn main() {
                 *stor.borrow_mut() = load_svd(&pathbuf).unwrap();
                 if let Some(st) = &*stor.borrow() {
                     *svd_f.borrow_mut() = pathbuf.into_os_string().into_string().ok();
-                    view.set_model(st);
+                    view.set_model(Some(st));
                 }
             }
         }
@@ -175,8 +170,8 @@ fn main() {
         let store = store.clone();
         cell_alias.connect_edited(move |_, path, new_text| {
             if let Some(st) = &*store.borrow() {
-                let iter = st.get_iter(&path).unwrap();
-                st.set(&iter, &[4], &[&new_text]);
+                let iter = st.iter(&path).unwrap();
+                st.set_value(&iter, 4, &new_text.to_value());
             }
         });
     }
@@ -217,7 +212,7 @@ fn main() {
                     if let Some(svd_file) = &*svd_filename.borrow() {
                         window.set_title(svd_file);
                     }
-                    view.set_model(st);
+                    view.set_model(Some(st));
                 }
             }
         });
@@ -226,33 +221,34 @@ fn main() {
 }
 
 fn choose_file(window: &gtk::Window) -> Option<PathBuf> {
-    let dialog = gtk::FileChooserDialog::new(
+    let dialog = gtk::FileChooserDialog::with_buttons(
         Some("Please choose a file"),
         Some(window),
         gtk::FileChooserAction::Open,
+        &[
+            ("Cancel", gtk::ResponseType::Cancel),
+            ("Open", gtk::ResponseType::Ok),
+        ],
     );
-    dialog.add_button("Cancel", gtk::ResponseType::Cancel);
-    dialog.add_button("Open", gtk::ResponseType::Ok);
     let response = dialog.run();
     let pathbuf = match response {
-        okr if okr == gtk::ResponseType::Ok.into() => dialog.get_filename(),
+        okr if okr == gtk::ResponseType::Ok.into() => dialog.filename(),
         _ => None,
     };
-    dialog.destroy();
+    dialog.close();
     pathbuf
 }
 
 use indexmap::IndexMap;
 use std::iter::FromIterator;
-use svd::error::SVDError;
 
-fn load_svd(svd_path: &Path) -> Result<Option<TreeStore>, SVDError> {
+fn load_svd(svd_path: &Path) -> Result<Option<TreeStore>, anyhow::Error> {
     let xml = &mut String::new();
     File::open(&svd_path)
         .unwrap()
         .read_to_string(xml)
         .expect("Unable to read file");
-    let device = svd::parse(xml)?;
+    let device = svd_parser::parse(xml)?;
 
     let permap =
         IndexMap::<&str, _>::from_iter(device.peripherals.iter().map(|i| (i.name.as_str(), i)));
@@ -319,11 +315,11 @@ fn load_svd(svd_path: &Path) -> Result<Option<TreeStore>, SVDError> {
 
     let store = TreeStore::new(&[
         String::static_type(), // name
-        gtk::Type::Bool,       // active
+        bool::static_type(),   // active
         String::static_type(), // address
         String::static_type(), // description
         String::static_type(), // alias
-        gtk::Type::Bool,       // sens
+        bool::static_type(),   // sens
         String::static_type(), // offset
         String::static_type(), // width
         String::static_type(), // tooltip
@@ -340,8 +336,13 @@ fn load_svd(svd_path: &Path) -> Result<Option<TreeStore>, SVDError> {
         let piter = store.append(None);
         store.set(
             &piter,
-            &[0, 2, 3, 9, 10],
-            &[&pname, &format!("0x{:08x}", paddr), &pdesc, &pname, &"p"],
+            &[
+                (0, &pname),
+                (2, &format!("0x{:08x}", paddr)),
+                (3, &pdesc),
+                (9, &pname),
+                (10, &"p"),
+            ],
         );
         let ptooltip: String;
         if **pname != pbase.name {
@@ -352,10 +353,10 @@ fn load_svd(svd_path: &Path) -> Result<Option<TreeStore>, SVDError> {
         } else {
             ptooltip = format!("<b>{}</b>\n{}", pname, &pdesc)
         }
-        store.set(&piter, &[8], &[&ptooltip]);
+        store.set_value(&piter, 8, &ptooltip.to_value());
         if let Some(rcs) = &pbase.registers {
             for rc in rcs {
-                let rciter = &store.append(&piter);
+                let rciter = &store.append(Some(&piter));
                 let path = &pname.to_string();
                 let derpath = &pbase.name.to_string();
                 match rc {
@@ -372,7 +373,7 @@ fn load_svd(svd_path: &Path) -> Result<Option<TreeStore>, SVDError> {
     Ok(Some(store))
 }
 
-fn get_dim_indexes(rcai: &RegisterClusterArrayInfo) -> Vec<String> {
+fn get_dim_indexes(rcai: &DimElement) -> Vec<String> {
     if let Some(di) = &rcai.dim_index {
         di.clone()
     } else {
@@ -387,36 +388,36 @@ fn add_cluster_tree(
     cluster: &Cluster,
     cpath: &String,
     derpath: &String,
-    baseaddr: u32,
+    baseaddr: u64,
 ) {
     match cluster {
         Cluster::Single(c) => {
-            let caddr = baseaddr + c.address_offset;
-            let desc = rm_white(&c.description);
+            let caddr = baseaddr + c.address_offset as u64;
+            let desc = rm_white(c.description.as_deref().unwrap_or(""));
             let path = format!("{}.{}", cpath, c.name);
             let derpath = format!("{}.{}", derpath, c.name);
             store.set(
                 citer,
-                &[0, 2, 3, 5, 9, 10],
                 &[
-                    &c.name,
-                    &format!("0x{:08x}", caddr),
-                    &desc,
-                    &false,
-                    &path,
-                    &"c",
+                    (0, &c.name),
+                    (2, &format!("0x{:08x}", caddr)),
+                    (3, &desc),
+                    (5, &false),
+                    (9, &path),
+                    (10, &"c"),
                 ],
             );
-            store.set(
+            store.set_value(
                 citer,
-                &[8],
-                &[&format!(
+                8,
+                &format!(
                     "<b>{}</b>\n  offset: 0x{:02x}\n{}",
                     &path, c.address_offset, &desc
-                )],
+                )
+                .to_value(),
             );
             for rc in &c.children {
-                let rciter = &store.append(citer);
+                let rciter = &store.append(Some(citer));
                 match rc {
                     RegisterCluster::Register(reg) => {
                         add_register_tree(&store, rciter, &ev_map, reg, &path, &derpath, caddr)
@@ -429,44 +430,49 @@ fn add_cluster_tree(
         }
         Cluster::Array(c, rcai) => {
             let dim_indexes = get_dim_indexes(rcai);
-            let caddr = baseaddr + c.address_offset;
-            let desc = rm_white(&c.description);
+            let caddr = baseaddr + c.address_offset as u64;
+            let desc = rm_white(c.description.as_deref().unwrap_or(""));
             let path = format!("{}.{}", cpath, c.name);
             let derpath = format!("{}.{}", derpath, c.name);
             store.set(
                 citer,
-                &[0, 3, 5, 9, 10],
-                &[&c.name, &desc, &false, &path, &"ca"],
+                &[
+                    (0, &c.name),
+                    (3, &desc),
+                    (5, &false),
+                    (9, &path),
+                    (10, &"ca"),
+                ],
             );
-            store.set(citer, &[8], &[&format!("<b>{}</b>\n{}", &path, &desc)]);
+            store.set_value(citer, 8, &format!("<b>{}</b>\n{}", &path, &desc).to_value());
             for (i, idx) in dim_indexes.iter().enumerate() {
                 let offset = rcai.dim_increment * (i as u32);
-                let citer = &store.append(citer);
+                let citer = &store.append(Some(citer));
                 let cname = c.name.replace("%s", idx.as_str());
                 let path = format!("{}.{}.{}", cpath, c.name, idx);
                 store.set(
                     citer,
-                    &[0, 2, 5, 9, 10],
                     &[
-                        &cname,
-                        &format!("0x{:08x}", caddr + offset),
-                        &false,
-                        &path,
-                        &"c",
+                        (0, &cname),
+                        (2, &format!("0x{:08x}", caddr + offset as u64)),
+                        (5, &false),
+                        (9, &path),
+                        (10, &"c"),
                     ],
                 );
-                store.set(
+                store.set_value(
                     citer,
-                    &[8],
-                    &[&format!(
+                    8,
+                    &format!(
                         "<b>{}</b>\n  offset: 0x{:02x}\n{}",
                         &path,
                         c.address_offset + offset,
                         &desc
-                    )],
+                    )
+                    .to_value(),
                 );
                 for rc in &c.children {
-                    let rciter = &store.append(citer);
+                    let rciter = &store.append(Some(citer));
                     match rc {
                         RegisterCluster::Register(reg) => add_register_tree(
                             &store,
@@ -475,7 +481,7 @@ fn add_cluster_tree(
                             reg,
                             &path,
                             &derpath,
-                            caddr + offset,
+                            caddr + offset as u64,
                         ),
                         RegisterCluster::Cluster(cl) => add_cluster_tree(
                             &store,
@@ -484,7 +490,7 @@ fn add_cluster_tree(
                             cl,
                             &path,
                             &derpath,
-                            caddr + offset,
+                            caddr + offset as u64,
                         ),
                     }
                 }
@@ -500,75 +506,92 @@ fn add_register_tree(
     reg: &Register,
     rpath: &String,
     derpath: &String,
-    baseaddr: u32,
+    baseaddr: u64,
 ) {
     match reg {
         Register::Single(r) => {
-            let raddr = baseaddr + r.address_offset;
+            let raddr = baseaddr + r.address_offset as u64;
             let rdesc = rm_white(&r.description.clone().unwrap_or_default());
             let path = format!("{}.{}", rpath, r.name);
             store.set(
                 riter,
-                &[0, 2, 3, 5, 9, 10],
                 &[
-                    &r.name,
-                    &format!("0x{:08x}", raddr),
-                    &rdesc,
-                    &true,
-                    &path,
-                    &"r",
+                    (0, &r.name),
+                    (2, &format!("0x{:08x}", raddr)),
+                    (3, &rdesc),
+                    (5, &true),
+                    (9, &path),
+                    (10, &"r"),
                 ],
             );
-            store.set(
+            store.set_value(
                 riter,
-                &[8],
-                &[&format!(
+                8,
+                &format!(
                     "<b>{}</b>\n  offset: 0x{:02x}\n{}",
                     &path, r.address_offset, &rdesc
-                )],
+                )
+                .to_value(),
             );
 
-            add_fields_tree(store, riter, ev_map, r, &path, derpath, raddr);
+            add_fields_tree(store, riter, ev_map, r, &path, derpath, raddr as u64);
         }
         Register::Array(r, rcai) => {
             let dim_indexes = get_dim_indexes(rcai);
-            let raddr = baseaddr + r.address_offset;
+            let raddr = baseaddr + r.address_offset as u64;
             let rdesc = rm_white(&r.description.clone().unwrap_or_default());
             let path = format!("{}.{}", rpath, r.name);
             store.set(
                 riter,
-                &[0, 3, 5, 9, 10],
-                &[&r.name, &rdesc, &false, &path, &"ra"],
+                &[
+                    (0, &r.name),
+                    (3, &rdesc),
+                    (5, &false),
+                    (9, &path),
+                    (10, &"ra"),
+                ],
             );
-            store.set(riter, &[8], &[&format!("<b>{}</b>\n{}", &path, &rdesc)]);
+            store.set_value(
+                riter,
+                8,
+                &format!("<b>{}</b>\n{}", &path, &rdesc).to_value(),
+            );
 
             for (i, idx) in dim_indexes.iter().enumerate() {
                 let offset = rcai.dim_increment * (i as u32);
-                let riter = &store.append(riter);
+                let riter = &store.append(Some(riter));
                 let rname = r.name.replace("%s", idx.as_str());
                 let path = format!("{}.{}.{}", rpath, r.name, idx);
                 store.set(
                     riter,
-                    &[0, 2, 5, 9, 10],
                     &[
-                        &rname,
-                        &format!("0x{:08x}", raddr + offset),
-                        &true,
-                        &path,
-                        &"r",
+                        (0, &rname),
+                        (2, &format!("0x{:08x}", raddr + offset as u64)),
+                        (5, &true),
+                        (9, &path),
+                        (10, &"r"),
                     ],
                 );
-                store.set(
+                store.set_value(
                     riter,
-                    &[8],
-                    &[&format!(
+                    8,
+                    &format!(
                         "<b>{}</b>\n  offset: 0x{:02x}\n{}",
                         &path,
                         r.address_offset + offset,
                         &rdesc
-                    )],
+                    )
+                    .to_value(),
                 );
-                add_fields_tree(store, riter, ev_map, r, &path, derpath, raddr + offset);
+                add_fields_tree(
+                    store,
+                    riter,
+                    ev_map,
+                    r,
+                    &path,
+                    derpath,
+                    raddr + offset as u64,
+                );
             }
         }
     }
@@ -581,26 +604,28 @@ fn add_fields_tree(
     r: &RegisterInfo,
     path: &String,
     derpath: &String,
-    raddr: u32,
+    raddr: u64,
 ) {
     if let Some(fields) = &r.fields {
         for f in fields {
             let fdesc = rm_white(&f.description.clone().unwrap_or_default());
             let br = f.bit_range;
-            let fiter = store.append(riter);
+            let fiter = store.append(Some(riter));
             let fpath = format!("{}.{}", path, f.name);
             store.set(
                 &fiter,
-                &[0, 2, 3, 5, 6, 7, 9, 10],
                 &[
-                    &f.name,
-                    &format!("0x{:08x}", raddr),
-                    &format!("[{}-{}]: {}", br.offset + br.width - 1, br.offset, &fdesc),
-                    &true,
-                    &br.offset,
-                    &br.width,
-                    &fpath,
-                    &"f",
+                    (0, &f.name),
+                    (2, &format!("0x{:08x}", raddr)),
+                    (
+                        3,
+                        &format!("[{}-{}]: {}", br.offset + br.width - 1, br.offset, &fdesc),
+                    ),
+                    (5, &true),
+                    (6, &br.offset),
+                    (7, &br.width),
+                    (9, &fpath),
+                    (10, &"f"),
                 ],
             );
 
@@ -641,10 +666,10 @@ fn add_fields_tree(
                     }
                 }
             }
-            store.set(
+            store.set_value(
                 &fiter,
-                &[8],
-                &[&format!(
+                8,
+                &format!(
                     "<b>{}</b>\n [{}-{}]: {}{}{}",
                     &fpath,
                     br.offset + br.width - 1,
@@ -652,14 +677,15 @@ fn add_fields_tree(
                     &fdesc,
                     (if !svalues.is_empty() { "\nValues:" } else { "" }),
                     &svalues
-                )],
+                )
+                .to_value(),
             );
         }
     }
 }
 
 fn recursive_load(view: &TreeView, store: &TreeStore, iter: &TreeIter, regs: &HashMap<&str, &str>) {
-    if let Some(iter) = &store.iter_children(iter) {
+    if let Some(iter) = &store.iter_children(Some(iter)) {
         loop {
             find_and_select(view, store, iter, regs);
             recursive_load(view, store, iter, regs);
@@ -671,7 +697,7 @@ fn recursive_load(view: &TreeView, store: &TreeStore, iter: &TreeIter, regs: &Ha
 }
 
 fn select_items(view: &TreeView, store: &TreeStore, regs: &HashMap<&str, &str>) {
-    if let Some(iter) = &store.get_iter_first() {
+    if let Some(iter) = &store.iter_first() {
         loop {
             recursive_load(view, store, iter, regs);
             if !store.iter_next(iter) {
@@ -689,12 +715,12 @@ fn find_and_select(
 ) {
     let name = get_reg_path(store, iter);
     if regs.contains_key(&name as &str) {
-        store.set(iter, &[1], &[&true]);
+        store.set_value(iter, 1, &true.to_value());
         let alias = regs[&name as &str];
         if alias != "_" {
-            store.set(iter, &[4], &[&alias]);
+            store.set_value(iter, 4, &alias.to_value());
         }
-        view.expand_to_path(&store.get_path(iter).unwrap());
+        view.expand_to_path(&store.path(iter).unwrap());
     }
 }
 
@@ -703,7 +729,7 @@ fn get_reg_path(store: &TreeStore, citer: &TreeIter) -> String {
 }
 
 fn recursive_save(store: &TreeStore, iter: &TreeIter, s: &mut String) {
-    if let Some(iter) = &store.iter_children(iter) {
+    if let Some(iter) = &store.iter_children(Some(iter)) {
         loop {
             if store.get_bool(iter, 1) {
                 let alias = store.get_string(&iter, 4);
@@ -747,7 +773,7 @@ fn recursive_save(store: &TreeStore, iter: &TreeIter, s: &mut String) {
 
 fn save_data(store: &TreeStore, svd_file: &String) -> Result<(), std::io::Error> {
     let mut s = svd_file.clone() + "\n";
-    if let Some(piter) = &store.get_iter_first() {
+    if let Some(piter) = &store.iter_first() {
         loop {
             recursive_save(store, piter, &mut s);
             if !store.iter_next(piter) {
@@ -763,9 +789,9 @@ fn save_data(store: &TreeStore, svd_file: &String) -> Result<(), std::io::Error>
 }
 
 fn on_toggle(st: &TreeStore, path: &TreePath) {
-    if let Some(iter) = st.get_iter(path) {
+    if let Some(iter) = st.iter(path) {
         let current_value = !st.get_bool(&iter, 1);
-        st.set(&iter, &[1], &[&current_value]);
+        st.set_value(&iter, 1, &current_value.to_value());
         println!(
             "{} {}",
             get_reg_path(st, &iter),
@@ -781,13 +807,9 @@ trait GetValue {
 
 impl GetValue for TreeStore {
     fn get_bool(&self, iter: &TreeIter, ncol: i32) -> bool {
-        self.get_value(&iter, ncol)
-            .get::<bool>()
-            .unwrap_or_default()
+        self.value(&iter, ncol).get::<bool>().unwrap_or_default()
     }
     fn get_string(&self, iter: &TreeIter, ncol: i32) -> String {
-        self.get_value(&iter, ncol)
-            .get::<String>()
-            .unwrap_or_default()
+        self.value(&iter, ncol).get::<String>().unwrap_or_default()
     }
 }
