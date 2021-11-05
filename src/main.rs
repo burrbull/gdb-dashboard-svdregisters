@@ -449,12 +449,14 @@ fn add_cluster_tree(
                 let offset = dim.dim_increment * (i as u32);
                 let citer = &store.append(Some(citer));
                 let cname = c.name.replace("[%s]", &idx).replace("%s", &idx);
+                let desc = desc.replace("%s", &idx);
                 let path = format!("{}.{}", cpath, cname);
                 store.set(
                     citer,
                     &[
                         (0, &cname),
                         (2, &format!("0x{:08x}", caddr + offset as u64)),
+                        (3, &desc),
                         (5, &false),
                         (9, &path),
                         (10, &"c"),
@@ -558,12 +560,14 @@ fn add_register_tree(
                 let offset = dim.dim_increment * (i as u32);
                 let riter = &store.append(Some(riter));
                 let rname = r.name.replace("[%s]", &idx).replace("%s", &idx);
+                let rdesc = rdesc.replace("%s", &idx);
                 let path = format!("{}.{}", rpath, rname);
                 store.set(
                     riter,
                     &[
                         (0, &rname),
                         (2, &format!("0x{:08x}", raddr + offset as u64)),
+                        (3, &rdesc),
                         (5, &true),
                         (9, &path),
                         (10, &"r"),
@@ -706,6 +710,7 @@ fn add_fields_tree(
                         let fiter = &store.append(Some(&fiter));
                         let offset = dim.dim_increment * (i as u32);
                         let fname = f.name.replace("[%s]", &idx).replace("%s", &idx);
+                        let fdesc = fdesc.replace("%s", &idx);
                         let fpath = format!("{}.{}", path, fname);
 
                         store.set(
