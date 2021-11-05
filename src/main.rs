@@ -6,7 +6,7 @@ use gtk::{
     TreeViewColumn,
 };
 
-use svd::{Cluster, DimElement, EnumeratedValues, Register, RegisterCluster, RegisterInfo};
+use svd::{Cluster, DimElement, EnumeratedValues, Field, Register, RegisterCluster, RegisterInfo};
 use svd_parser::svd;
 
 use std::{
@@ -385,17 +385,17 @@ fn add_cluster_tree(
     store: &TreeStore,
     citer: &TreeIter,
     ev_map: &HashMap<String, &EnumeratedValues>,
-    cluster: &Cluster,
+    c: &Cluster,
     cpath: &String,
     derpath: &String,
     baseaddr: u64,
 ) {
-    match cluster {
+    let caddr = baseaddr + c.address_offset as u64;
+    let desc = rm_white(c.description.as_deref().unwrap_or(""));
+    let path = format!("{}.{}", cpath, c.name);
+    let derpath = format!("{}.{}", derpath, c.name);
+    match c {
         Cluster::Single(c) => {
-            let caddr = baseaddr + c.address_offset as u64;
-            let desc = rm_white(c.description.as_deref().unwrap_or(""));
-            let path = format!("{}.{}", cpath, c.name);
-            let derpath = format!("{}.{}", derpath, c.name);
             store.set(
                 citer,
                 &[
@@ -411,7 +411,7 @@ fn add_cluster_tree(
                 citer,
                 8,
                 &format!(
-                    "<b>{}</b>\n  offset: 0x{:02x}\n{}",
+                    "<b>{} cluster </b>\n  offset: 0x{:02x}\n{}",
                     &path, c.address_offset, &desc
                 )
                 .to_value(),
@@ -428,12 +428,8 @@ fn add_cluster_tree(
                 }
             }
         }
-        Cluster::Array(c, rcai) => {
-            let dim_indexes = get_dim_indexes(rcai);
-            let caddr = baseaddr + c.address_offset as u64;
-            let desc = rm_white(c.description.as_deref().unwrap_or(""));
-            let path = format!("{}.{}", cpath, c.name);
-            let derpath = format!("{}.{}", derpath, c.name);
+        Cluster::Array(c, dim) => {
+            let dim_indexes = get_dim_indexes(dim);
             store.set(
                 citer,
                 &[
@@ -444,12 +440,16 @@ fn add_cluster_tree(
                     (10, &"ca"),
                 ],
             );
-            store.set_value(citer, 8, &format!("<b>{}</b>\n{}", &path, &desc).to_value());
+            store.set_value(
+                citer,
+                8,
+                &format!("<b>{} cluster array</b>\n{}", &path, &desc).to_value(),
+            );
             for (i, idx) in dim_indexes.iter().enumerate() {
-                let offset = rcai.dim_increment * (i as u32);
+                let offset = dim.dim_increment * (i as u32);
                 let citer = &store.append(Some(citer));
-                let cname = c.name.replace("%s", idx.as_str());
-                let path = format!("{}.{}.{}", cpath, c.name, idx);
+                let cname = c.name.replace("[%s]", &idx).replace("%s", &idx);
+                let path = format!("{}.{}", cpath, cname);
                 store.set(
                     citer,
                     &[
@@ -503,16 +503,16 @@ fn add_register_tree(
     store: &TreeStore,
     riter: &TreeIter,
     ev_map: &HashMap<String, &EnumeratedValues>,
-    reg: &Register,
+    r: &Register,
     rpath: &String,
     derpath: &String,
     baseaddr: u64,
 ) {
-    match reg {
+    let raddr = baseaddr + r.address_offset as u64;
+    let rdesc = rm_white(r.description.as_deref().unwrap_or(""));
+    let path = format!("{}.{}", rpath, r.name);
+    match r {
         Register::Single(r) => {
-            let raddr = baseaddr + r.address_offset as u64;
-            let rdesc = rm_white(&r.description.clone().unwrap_or_default());
-            let path = format!("{}.{}", rpath, r.name);
             store.set(
                 riter,
                 &[
@@ -528,7 +528,7 @@ fn add_register_tree(
                 riter,
                 8,
                 &format!(
-                    "<b>{}</b>\n  offset: 0x{:02x}\n{}",
+                    "<b>{} register </b>\n  offset: 0x{:02x}\n{}",
                     &path, r.address_offset, &rdesc
                 )
                 .to_value(),
@@ -536,11 +536,8 @@ fn add_register_tree(
 
             add_fields_tree(store, riter, ev_map, r, &path, derpath, raddr as u64);
         }
-        Register::Array(r, rcai) => {
-            let dim_indexes = get_dim_indexes(rcai);
-            let raddr = baseaddr + r.address_offset as u64;
-            let rdesc = rm_white(&r.description.clone().unwrap_or_default());
-            let path = format!("{}.{}", rpath, r.name);
+        Register::Array(r, dim) => {
+            let dim_indexes = get_dim_indexes(dim);
             store.set(
                 riter,
                 &[
@@ -554,14 +551,14 @@ fn add_register_tree(
             store.set_value(
                 riter,
                 8,
-                &format!("<b>{}</b>\n{}", &path, &rdesc).to_value(),
+                &format!("<b>{} register array</b>\n{}", &path, &rdesc).to_value(),
             );
 
             for (i, idx) in dim_indexes.iter().enumerate() {
-                let offset = rcai.dim_increment * (i as u32);
+                let offset = dim.dim_increment * (i as u32);
                 let riter = &store.append(Some(riter));
-                let rname = r.name.replace("%s", idx.as_str());
-                let path = format!("{}.{}.{}", rpath, r.name, idx);
+                let rname = r.name.replace("[%s]", &idx).replace("%s", &idx);
+                let path = format!("{}.{}", rpath, rname);
                 store.set(
                     riter,
                     &[
@@ -608,27 +605,6 @@ fn add_fields_tree(
 ) {
     if let Some(fields) = &r.fields {
         for f in fields {
-            let fdesc = rm_white(&f.description.clone().unwrap_or_default());
-            let br = f.bit_range;
-            let fiter = store.append(Some(riter));
-            let fpath = format!("{}.{}", path, f.name);
-            store.set(
-                &fiter,
-                &[
-                    (0, &f.name),
-                    (2, &format!("0x{:08x}", raddr)),
-                    (
-                        3,
-                        &format!("[{}-{}]: {}", br.offset + br.width - 1, br.offset, &fdesc),
-                    ),
-                    (5, &true),
-                    (6, &br.offset),
-                    (7, &br.width),
-                    (9, &fpath),
-                    (10, &"f"),
-                ],
-            );
-
             let mut svalues = String::new();
             for evalues in &f.enumerated_values {
                 if let Some(evs_name) = &evalues.derived_from {
@@ -666,20 +642,106 @@ fn add_fields_tree(
                     }
                 }
             }
-            store.set_value(
-                &fiter,
-                8,
-                &format!(
-                    "<b>{}</b>\n [{}-{}]: {}{}{}",
-                    &fpath,
-                    br.offset + br.width - 1,
-                    br.offset,
-                    &fdesc,
-                    (if !svalues.is_empty() { "\nValues:" } else { "" }),
-                    &svalues
-                )
-                .to_value(),
-            );
+
+            let fdesc = rm_white(f.description.as_deref().unwrap_or(""));
+            let fpath = format!("{}.{}", path, f.name);
+            let br = f.bit_range;
+            let fiter = store.append(Some(riter));
+
+            match f {
+                Field::Single(f) => {
+                    let offset = br.offset;
+                    let width = br.width;
+                    store.set(
+                        &fiter,
+                        &[
+                            (0, &f.name),
+                            (2, &format!("0x{:08x}", raddr)),
+                            (
+                                3,
+                                &format!("[{}-{}]: {}", offset + width - 1, offset, &fdesc),
+                            ),
+                            (5, &true),
+                            (6, &offset),
+                            (7, &width),
+                            (9, &fpath),
+                            (10, &"f"),
+                        ],
+                    );
+
+                    store.set_value(
+                        &fiter,
+                        8,
+                        &format!(
+                            "<b>{} field</b>\n [{}-{}]: {}{}{}",
+                            &fpath,
+                            offset + width - 1,
+                            offset,
+                            &fdesc,
+                            (if !svalues.is_empty() { "\nValues:" } else { "" }),
+                            &svalues
+                        )
+                        .to_value(),
+                    );
+                }
+                Field::Array(f, dim) => {
+                    let width = br.width;
+                    let dim_indexes = get_dim_indexes(dim);
+                    store.set(
+                        &fiter,
+                        &[
+                            (0, &f.name),
+                            (3, &fdesc),
+                            (5, &false),
+                            (9, &fpath),
+                            (10, &"fa"),
+                        ],
+                    );
+                    store.set_value(
+                        &fiter,
+                        8,
+                        &format!("<b>{} field array</b>\n{}", &fpath, &fdesc).to_value(),
+                    );
+                    for (i, idx) in dim_indexes.iter().enumerate() {
+                        let fiter = &store.append(Some(&fiter));
+                        let offset = dim.dim_increment * (i as u32);
+                        let fname = f.name.replace("[%s]", &idx).replace("%s", &idx);
+                        let fpath = format!("{}.{}", path, fname);
+
+                        store.set(
+                            &fiter,
+                            &[
+                                (0, &fname),
+                                (2, &format!("0x{:08x}", raddr)),
+                                (
+                                    3,
+                                    &format!("[{}-{}]: {}", offset + width - 1, offset, &fdesc),
+                                ),
+                                (5, &true),
+                                (6, &offset),
+                                (7, &width),
+                                (9, &fpath),
+                                (10, &"f"),
+                            ],
+                        );
+
+                        store.set_value(
+                            &fiter,
+                            8,
+                            &format!(
+                                "<b>{} field</b>\n [{}-{}]: {}{}{}",
+                                &fpath,
+                                offset + width - 1,
+                                offset,
+                                &fdesc,
+                                (if !svalues.is_empty() { "\nValues:" } else { "" }),
+                                &svalues
+                            )
+                            .to_value(),
+                        );
+                    }
+                }
+            }
         }
     }
 }
