@@ -1,12 +1,6 @@
 import os.path
 import struct
 
-def setbit (val, offset, bit):
-    if bit:
-        return val | (1 << offset)
-    else:
-        return val & ~(1 << offset)
-
 class Register:
     def __init__ (self, name, alias, address):
         self.name, self.address = name, address
@@ -56,6 +50,7 @@ class Register:
             if 0 <= value < (2 ** width):
                 run("set *{0} = {1}".format(self.address, value))
 
+
 class Field (Register):
     def __init__ (self, name, alias, address, boffset, bwidth):
         self.name, self.address, self.boffset, self.bwidth = name, address, boffset, bwidth
@@ -76,7 +71,7 @@ class Field (Register):
         try:
             if value.type.code in [gdb.TYPE_CODE_INT, gdb.TYPE_CODE_PTR]:
                 int_value = to_unsigned(value, value.type.sizeof)
-                int_value = (int_value >> self.boffset) - (int_value>>(self.boffset+self.bwidth)<<self.bwidth)
+                int_value = (int_value >> self.boffset) & (0xffff_ffff >> (32 - self.bwidth))
                 if FORMAT == "BIN":
                     value_format = '0b{{:0{}b}}'.format(self.bwidth)
                 elif FORMAT == "DECIMAL":
@@ -93,11 +88,8 @@ class Field (Register):
         if oldvalue.type.code == gdb.TYPE_CODE_INT:
             int_value = to_unsigned(oldvalue, oldvalue.type.sizeof)
             if 0 <= value < (2 ** self.bwidth):
-                mask = value << self.boffset
-                newvalue = oldvalue
-                for i in range(self.bwidth):
-                    bit = (value >> i) - (value >> (i+1) << 1)
-                    newvalue = setbit(newvalue, self.boffset+i, bit)
+                clean_mask = (0xffff_ffff >> (32 - self.bwidth))
+                newvalue = oldvalue & ~(clean_mask << self.boffset) | (value << self.boffset)
                 run("set *{0} = {1}".format(self.address, newvalue))
 
 
