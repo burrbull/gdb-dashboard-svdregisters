@@ -6,7 +6,7 @@ use gtk::{
     TreeViewColumn,
 };
 
-use svd::{Cluster, DimElement, EnumeratedValues, Field, Register, RegisterCluster, RegisterInfo};
+use svd::{Cluster, EnumeratedValues, Field, Register, RegisterCluster, RegisterInfo};
 use svd_parser::svd;
 
 use std::{
@@ -119,10 +119,8 @@ fn main() {
                 println!("SVD File {}", filename);
                 let regs: HashMap<&str, &str> = lines
                     .map(|l| {
-                        (
-                            l.split_whitespace().nth(0).unwrap(),
-                            l.split_whitespace().nth(1).unwrap(),
-                        )
+                        let mut ws = l.split_whitespace();
+                        (ws.next().unwrap(), ws.next().unwrap())
                     })
                     .collect();
                 *stor.borrow_mut() = load_svd(Path::new(&filename)).unwrap();
@@ -344,15 +342,14 @@ fn load_svd(svd_path: &Path) -> Result<Option<TreeStore>, anyhow::Error> {
                 (10, &"p"),
             ],
         );
-        let ptooltip: String;
-        if **pname != pbase.name {
-            ptooltip = format!(
+        let ptooltip = if **pname != pbase.name {
+            format!(
                 "<b>{}</b>\n  derived from: <i>{}</i>\n{}",
                 pname, pbase.name, &pdesc
             )
         } else {
-            ptooltip = format!("<b>{}</b>\n{}", pname, &pdesc)
-        }
+            format!("<b>{}</b>\n{}", pname, &pdesc)
+        };
         store.set_value(&piter, 8, &ptooltip.to_value());
         if let Some(rcs) = &pbase.registers {
             for rc in rcs {
@@ -371,14 +368,6 @@ fn load_svd(svd_path: &Path) -> Result<Option<TreeStore>, anyhow::Error> {
         }
     }
     Ok(Some(store))
-}
-
-fn get_dim_indexes(rcai: &DimElement) -> Vec<String> {
-    if let Some(di) = &rcai.dim_index {
-        di.clone()
-    } else {
-        (0..rcai.dim).map(|i| i.to_string()).collect()
-    }
 }
 
 fn add_cluster_tree(
@@ -429,7 +418,6 @@ fn add_cluster_tree(
             }
         }
         Cluster::Array(c, dim) => {
-            let dim_indexes = get_dim_indexes(dim);
             store.set(
                 citer,
                 &[
@@ -445,7 +433,7 @@ fn add_cluster_tree(
                 8,
                 &format!("<b>{} cluster array</b>\n{}", &path, &desc).to_value(),
             );
-            for (i, idx) in dim_indexes.iter().enumerate() {
+            for (i, idx) in dim.indexes().enumerate() {
                 let offset = dim.dim_increment * (i as u32);
                 let citer = &store.append(Some(citer));
                 let cname = c.name.replace("[%s]", &idx).replace("%s", &idx);
@@ -539,7 +527,6 @@ fn add_register_tree(
             add_fields_tree(store, riter, ev_map, r, &path, derpath, raddr as u64);
         }
         Register::Array(r, dim) => {
-            let dim_indexes = get_dim_indexes(dim);
             store.set(
                 riter,
                 &[
@@ -556,7 +543,7 @@ fn add_register_tree(
                 &format!("<b>{} register array</b>\n{}", &path, &rdesc).to_value(),
             );
 
-            for (i, idx) in dim_indexes.iter().enumerate() {
+            for (i, idx) in dim.indexes().enumerate() {
                 let offset = dim.dim_increment * (i as u32);
                 let riter = &store.append(Some(riter));
                 let rname = r.name.replace("[%s]", &idx).replace("%s", &idx);
@@ -690,7 +677,6 @@ fn add_fields_tree(
                 }
                 Field::Array(f, dim) => {
                     let width = br.width;
-                    let dim_indexes = get_dim_indexes(dim);
                     store.set(
                         &fiter,
                         &[
@@ -706,7 +692,7 @@ fn add_fields_tree(
                         8,
                         &format!("<b>{} field array</b>\n{}", &fpath, &fdesc).to_value(),
                     );
-                    for (i, idx) in dim_indexes.iter().enumerate() {
+                    for (i, idx) in dim.indexes().enumerate() {
                         let fiter = &store.append(Some(&fiter));
                         let offset = dim.dim_increment * (i as u32);
                         let fname = f.name.replace("[%s]", &idx).replace("%s", &idx);
