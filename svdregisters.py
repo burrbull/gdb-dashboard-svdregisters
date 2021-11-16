@@ -182,13 +182,18 @@ class SvdRegisters (Dashboard.Module):
         if not self.svd_device:
             try:
                 from cmsis_svd.parser import SVDParser
-                if os.path.isfile(SvdRegisters.FILE):
+            except:
+                raise Exception("Cannot open or parse SVD file. Check 'cmsis_svd' library installed")
+            if os.path.isfile(SvdRegisters.FILE):
+                try:
                     with open(SvdRegisters.FILE, 'r') as f:
                         lines = [l.strip() for l in f.readlines()]
                         parser = SVDParser.for_xml_file(lines[0])
                         self.svd_device = parser.get_device()
-            except:
-                raise Exception("Cannot open or parse SVD file. Check 'cmsis_svd' library installed")
+                except:
+                    raise Exception("Cannot load or parse SVD file")
+            else:
+                raise Exception("{} is missing. Add it".format(SvdRegisters.FILE))
         if self.svd_device and arg:
             args = arg.split()
             name = args[0]
