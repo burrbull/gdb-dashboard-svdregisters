@@ -183,7 +183,7 @@ class SvdRegisters (Dashboard.Module):
             try:
                 from cmsis_svd.parser import SVDParser
             except:
-                raise Exception("Cannot open or parse SVD file. Check 'cmsis_svd' library installed")
+                raise Exception("Cannot import SVDParser. Check 'cmsis_svd' library installed")
             if os.path.isfile(SvdRegisters.FILE):
                 try:
                     with open(SvdRegisters.FILE, 'r') as f:
