@@ -208,8 +208,9 @@ class SvdRegisters (Dashboard.Module):
         if len(path) > 1:
             for p in self.svd_device.peripherals:
                 if p.name == path[0]:
-                    return find_recursive(p._registers, name, path[1:], p.base_address)
+                    return SvdRegisters.find_recursive(p._registers, name, path[1:], p.base_address)
 
+    @staticmethod
     def find_recursive(rs, name, path, baseaddr):
         for r in rs:
             if r.name == path[0]:
