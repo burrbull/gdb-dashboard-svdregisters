@@ -1,6 +1,17 @@
 import os.path
 import struct
 
+def find_recursive(rs, name, path, baseaddr):
+    for r in rs:
+        if r.name == path[0]:
+            raddr = format_address(baseaddr + r.address_offset)
+            if len(path) == 1:
+                return Register(name, name, raddr)
+            else:
+                for f in r.fields:
+                    if f.name == path[1]:
+                        return Field(name, name, raddr, f.bit_offset, f.bit_width)
+
 class Register:
     def __init__ (self, name, alias, address):
         self.name, self.address = name, address
@@ -213,19 +224,7 @@ class SvdRegisters (Dashboard.Module):
         if len(path) > 1:
             for p in self.svd_device.peripherals:
                 if p.name == path[0]:
-                    return SvdRegisters.find_recursive(p._registers, name, path[1:], p.base_address)
-
-    @staticmethod
-    def find_recursive(rs, name, path, baseaddr):
-        for r in rs:
-            if r.name == path[0]:
-                raddr = format_address(baseaddr + r.address_offset)
-                if len(path) == 1:
-                    return Register(name, name, raddr)
-                else:
-                    for f in r.fields:
-                        if f.name == path[1]:
-                            return Field(name, name, raddr, f.bit_offset, f.bit_width)
+                    return find_recursive(p._registers, name, path[1:], p.base_address)
 
     def remove (self, arg):
         if os.path.isfile(SvdRegisters.FILE):
