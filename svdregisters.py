@@ -215,7 +215,7 @@ class SvdRegisters (Dashboard.Module):
                 if r:
                     r.alias = args[1] if len(args) > 1 else "_"
                     with open(SvdRegisters.FILE, "a") as f:
-                        f.write(str(r)+"\n")
+                        f.write(str(r))
                 else:
                     raise Exception("Register {} not found".format(name))
             else:
@@ -223,10 +223,15 @@ class SvdRegisters (Dashboard.Module):
 
     def find_register (self, name):
         path = name.split(".")
-        if len(path) > 1:
-            for p in self.svd_device.peripherals:
-                if p.name == path[0]:
-                    return Register.find_recursive(p._registers, name, path[1:], p.base_address)
+        pname = path[0]
+        pfound = False
+        for p in self.svd_device.peripherals:
+            if p.name == pname:
+                pfound = True
+                if len(path) > 1:
+                    return Register.find_recursive(p.registers, name, path[1:], p.base_address)
+        if pfound == False:
+            raise Exception("Peripheral {} not found".format(pname))
 
     def remove (self, arg):
         if os.path.isfile(SvdRegisters.FILE):
