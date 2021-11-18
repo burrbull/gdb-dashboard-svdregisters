@@ -127,6 +127,7 @@ class SvdRegisters (Dashboard.Module):
         if os.path.isfile(SvdRegisters.FILE):
             with open(SvdRegisters.FILE, 'r') as f:
                 lines = [l.strip() for l in f.readlines()]
+                lines = [l for l in lines if l]
             
             changed_list = []
             for reg_info in lines[1:]:
@@ -215,7 +216,7 @@ class SvdRegisters (Dashboard.Module):
                 if r:
                     r.alias = args[1] if len(args) > 1 else "_"
                     with open(SvdRegisters.FILE, "a") as f:
-                        f.write(str(r))
+                        f.write(str(r)+"\n")
                 else:
                     raise Exception("Register {} not found".format(name))
             else:
