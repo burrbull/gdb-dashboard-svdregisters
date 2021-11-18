@@ -120,7 +120,7 @@ class SvdRegisters (Dashboard.Module):
     def label (self):
         return 'SVD Registers'
 
-    def lines (self, term_width, style_changed):
+    def lines (self, term_width, term_height, style_changed):
         # fetch registers status
         out = []
         registers = []
