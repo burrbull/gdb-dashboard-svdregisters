@@ -1,17 +1,6 @@
 import os.path
 import struct
 
-def find_recursive(rs, name, path, baseaddr):
-    for r in rs:
-        if r.name == path[0]:
-            raddr = format_address(baseaddr + r.address_offset)
-            if len(path) == 1:
-                return Register(name, name, raddr)
-            else:
-                for f in r.fields:
-                    if f.name == path[1]:
-                        return Field(name, name, raddr, f.bit_offset, f.bit_width)
-
 class Register:
     def __init__ (self, name, alias, address):
         self.name, self.address = name, address
@@ -61,6 +50,17 @@ class Register:
             if 0 <= value < (2 ** width):
                 run("set *{0} = {1}".format(self.address, value))
 
+    @staticmethod
+    def find_recursive(rs, name, path, baseaddr):
+        for r in rs:
+            if r.name == path[0]:
+                raddr = format_address(baseaddr + r.address_offset)
+                if len(path) == 1:
+                    return Register(name, name, raddr)
+                else:
+                    for f in r.fields:
+                        if f.name == path[1]:
+                            return Field(name, name, raddr, f.bit_offset, f.bit_width)
 
 class Field (Register):
     def __init__ (self, name, alias, address, boffset, bwidth):
@@ -170,7 +170,9 @@ class SvdRegisters (Dashboard.Module):
                 for r, old_r in changed_list:
                     out.append('{} {} -> {}'.format(ansi(r.alias.rjust(max_name), R.style_low),
                                  ansi(old_r.value, ''), ansi(r.value, '')))
-                                 
+        else:
+            raise Exception("{} is missing. Add it".format(SvdRegisters.FILE))
+
         self.FORMAT_CHANGED = False
         return out
     
@@ -224,7 +226,7 @@ class SvdRegisters (Dashboard.Module):
         if len(path) > 1:
             for p in self.svd_device.peripherals:
                 if p.name == path[0]:
-                    return find_recursive(p._registers, name, path[1:], p.base_address)
+                    return Register.find_recursive(p._registers, name, path[1:], p.base_address)
 
     def remove (self, arg):
         if os.path.isfile(SvdRegisters.FILE):
