@@ -118,6 +118,7 @@ fn main() {
             if let Some(filename) = lines.next() {
                 println!("SVD File {}", filename);
                 let regs: HashMap<&str, &str> = lines
+                    .filter(|l| !l.is_empty())
                     .map(|l| {
                         let mut ws = l.split_whitespace();
                         (ws.next().unwrap(), ws.next().unwrap())
